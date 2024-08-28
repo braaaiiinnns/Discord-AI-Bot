@@ -2,23 +2,17 @@ version: '3.8'
 
 services:
   discord-bot:
-    image: python:3.9-slim  # Use a lightweight Python image
+    build: .
     container_name: discord_bot
     volumes:
-      - ./:/app  # Mount the current directory to /app in the container
-    working_dir: /app  # Set the working directory to /app
-    command: ["poetry", "run", "python", "chatgpt_discord_bot_v4.1.py"]  # Run the script using Poetry
+      - ./:/app
     env_file:
-      - .env  # Load environment variables from a .env file
+      - .env
     depends_on:
-      - redis  # Ensure Redis starts before this service
-    restart: unless-stopped  # Restart the bot unless it is manually stopped
-    logging:
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - redis
+    restart: unless-stopped
 
   redis:
-    image: redis:6.2  # Use Redis for caching if needed
+    image: redis:6.2
     container_name: redis
     restart: unless-stopped

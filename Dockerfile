@@ -1,5 +1,5 @@
-# Use a lightweight Python image
-FROM python:3.9-slim
+# Use a Python 3.12 image
+FROM python:3.12-slim
 
 # Set the working directory
 WORKDIR /app
@@ -7,7 +7,7 @@ WORKDIR /app
 # Install Poetry
 RUN pip install --no-cache-dir poetry
 
-# Copy the project files to the working directory
+# Copy the project files
 COPY . .
 
 # Install dependencies using Poetry

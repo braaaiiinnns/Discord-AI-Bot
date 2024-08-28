@@ -2,7 +2,6 @@
 
 import os
 import time
-import json
 from datetime import datetime, timedelta
 import discord
 from openai import OpenAI, APIConnectionError, APIError, RateLimitError, AuthenticationError
@@ -11,12 +10,17 @@ import logging
 from logging.handlers import RotatingFileHandler
 from colorama import Fore, Style, init
 from random_ascii_emoji import get_random_emoji
+import redis
+import json
 
 # Initialize colorama
 init(autoreset=True)
 
 # Load environment variables from a .env file
 load_dotenv()
+
+# Initialize Redis client (assuming Redis is running in a container named "redis")
+redis_client = redis.Redis(host='redis', port=6379, db=0)
 
 # Initialize logging
 logger = logging.getLogger('discord_bot')
@@ -58,52 +62,74 @@ discord_client = discord.Client(intents=intents)
 # Initialize OpenAI client with the API key from environment variables
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
-# File to store user request counts, reset times, and assistant IDs
-REQUEST_COUNT_FILE = 'user_requests.json'
-VECTOR_STORE_ID_FILE = 'vector_store_id.json'
-ASSISTANT_IDS_FILE = 'assistant_ids.json'
-WARHAMMER_CORE_RULES = '40kCoreRules.txt'
+# Constants for limits and reset times
 REQUEST_LIMIT = 24
 IMAGE_REQUEST_LIMIT = 12
 RESET_HOURS = 24
 
-# Load user request counts and reset times from the file or create the file if it doesn't exist
-if os.path.exists(REQUEST_COUNT_FILE):
-    with open(REQUEST_COUNT_FILE, 'r') as file:
-        user_request_data = json.load(file)
-else:
-    user_request_data = {}
-    with open(REQUEST_COUNT_FILE, 'w') as file:
-        json.dump(user_request_data, file)
-
 active_40kref_channel = None
 current_threads = {}  # Use a dictionary to manage threads by mode
 
-# Load assistant IDs from the file or initialize an empty dictionary if not available
-if os.path.exists(ASSISTANT_IDS_FILE):
-    with open(ASSISTANT_IDS_FILE, 'r') as file:
-        assistant_ids = json.load(file)
-else:
-    assistant_ids = {}
+def get_user_data(user_id):
+    """Retrieve user data from Redis."""
+    user_data = redis_client.get(f"user:{user_id}")
+    if user_data:
+        return json.loads(user_data)
+    else:
+        now = datetime.now().isoformat()
+        return {
+            'count': 0,
+            'image_count': 0,
+            'last_reset': now,
+            'last_image_reset': now,
+        }
 
-def save_assistant_ids():
-    """Save the assistant IDs to a file."""
-    with open(ASSISTANT_IDS_FILE, 'w') as file:
-        json.dump(assistant_ids, file)
+def save_user_data(user_id, user_data):
+    """Save user data to Redis."""
+    redis_client.set(f"user:{user_id}", json.dumps(user_data))
+
+def check_and_reset_user_count(user_id):
+    """Check if the user's request count should be reset."""
+    user_data = get_user_data(user_id)
+    now = datetime.now()
+
+    last_reset = datetime.fromisoformat(user_data['last_reset'])
+    last_image_reset = datetime.fromisoformat(user_data['last_image_reset'])
+    
+    if now - last_reset > timedelta(hours=RESET_HOURS):
+        user_data['count'] = 0
+        user_data['last_reset'] = now.isoformat()
+    
+    if now - last_image_reset > timedelta(hours=RESET_HOURS):
+        user_data['image_count'] = 0
+        user_data['last_image_reset'] = now.isoformat()
+    
+    save_user_data(user_id, user_data)
+
+def time_until_reset(user_id, reset_type):
+    """Calculate the time remaining until the request count is reset."""
+    user_data = get_user_data(user_id)
+    last_reset = datetime.fromisoformat(user_data[reset_type])
+    reset_time = last_reset + timedelta(hours=RESET_HOURS)
+    time_remaining = reset_time - datetime.now()
+    hours, remainder = divmod(time_remaining.seconds, 3600)
+    minutes = remainder // 60
+    return f"{hours}h{minutes}m"
 
 def get_or_create_assistant(mode, instructions=None, vector_store_id=None):
     """Get or create an assistant for a specific mode."""
-    if mode in assistant_ids:
-        assistant_id = assistant_ids[mode]
+    assistant_id = redis_client.get(f"assistant:{mode}")
+    
+    if assistant_id:
         try:
-            assistant = client.beta.assistants.retrieve(assistant_id=assistant_id)
+            assistant = client.beta.assistants.retrieve(assistant_id=assistant_id.decode())
             return assistant
         except Exception as e:
             logger.error(f"Failed to retrieve assistant for mode {mode}, creating a new one: {e}")
 
     if mode == "default":
         assistant = client.beta.assistants.create(
-            instructions=instructions or "You are an assistant.",
+            instructions=instructions or "You are an assistant. You are my best friend, who is a millennial.",
             model="gpt-4o",
         )
     elif mode == "40kref":
@@ -118,68 +144,15 @@ def get_or_create_assistant(mode, instructions=None, vector_store_id=None):
             }
         )
     
-    assistant_ids[mode] = assistant.id
-    save_assistant_ids()
+    redis_client.set(f"assistant:{mode}", assistant.id)
     return assistant
-
-def save_user_request_data():
-    """Save the user request data to a file."""
-    with open(REQUEST_COUNT_FILE, 'w') as file:
-        json.dump(user_request_data, file)
-
-def check_and_reset_user_count(user_id):
-    """Check if the user's request count should be reset."""
-    now = datetime.now()
-    if user_id not in user_request_data:
-        # Initialize user data if not present
-        user_request_data[user_id] = {
-            'count': 0,
-            'image_count': 0,
-            'last_reset': now.isoformat(),
-            'last_image_reset': now.isoformat(),
-        }
-        save_user_request_data()
-    else:
-        # Ensure 'last_reset' and 'last_image_reset' keys exist
-        if 'last_reset' not in user_request_data[user_id]:
-            user_request_data[user_id]['last_reset'] = now.isoformat()
-        if 'image_count' not in user_request_data[user_id]:
-            user_request_data[user_id]['image_count'] = 0
-        if 'last_image_reset' not in user_request_data[user_id]:
-            user_request_data[user_id]['last_image_reset'] = now.isoformat()
-        
-        last_reset = datetime.fromisoformat(user_request_data[user_id]['last_reset'])
-        last_image_reset = datetime.fromisoformat(user_request_data[user_id]['last_image_reset'])
-        if now - last_reset > timedelta(hours=RESET_HOURS):
-            # Reset the count and update the reset time
-            user_request_data[user_id]['count'] = 0
-            user_request_data[user_id]['last_reset'] = now.isoformat()
-        if now - last_image_reset > timedelta(hours=RESET_HOURS):
-            # Reset the image count and update the reset time
-            user_request_data[user_id]['image_count'] = 0
-            user_request_data[user_id]['last_image_reset'] = now.isoformat()
-        
-        save_user_request_data()
-
-def time_until_reset(user_id, reset_type):
-    """Calculate the time remaining until the request count is reset."""
-    last_reset = datetime.fromisoformat(user_request_data[user_id][reset_type])
-    reset_time = last_reset + timedelta(hours=RESET_HOURS)
-    time_remaining = reset_time - datetime.now()
-    hours, remainder = divmod(time_remaining.seconds, 3600)
-    minutes = remainder // 60
-    return f"{hours}h{minutes}m"
 
 def get_or_create_vector_store():
     """Get or create the vector store and return its ID."""
-    if os.path.exists(VECTOR_STORE_ID_FILE):
-        with open(VECTOR_STORE_ID_FILE, 'r') as file:
-            vector_store_data = json.load(file)
-            vector_store_id = vector_store_data.get('vector_store_id')
-            if vector_store_id:
-                return vector_store_id
+    vector_store_id = redis_client.get("vector_store_id")
+    if vector_store_id:
+        return vector_store_id.decode()
 
-    # Create a new vector store if not found
     vector_store = client.beta.vector_stores.create(
         name="40kCoreRules",
         expires_after={
@@ -187,39 +160,30 @@ def get_or_create_vector_store():
             "days": 60  # Custom expiration: 60 days after last activity
         }
     )
-
-    vector_store_id = vector_store.id
-
-    # Save the vector store ID to a file for future reuse
-    with open(VECTOR_STORE_ID_FILE, 'w') as file:
-        json.dump({"vector_store_id": vector_store_id}, file)
-
-    return vector_store_id
+    
+    redis_client.set("vector_store_id", vector_store.id)
+    return vector_store.id
 
 def ensure_file_uploaded(vector_store_id, file_name):
     """Ensure that the specified file is uploaded to the vector store."""
-    file_uploaded = False
-
-    # List existing files in the vector store to avoid re-uploading
     files_list = client.beta.vector_stores.files.list(vector_store_id=vector_store_id)
     
-    for file_info in files_list:
-        if file_info.status == 'complete':
-            file_uploaded = True
-            break
+    if any(file_info.status == 'complete' for file_info in files_list):
+        return
 
-    # If not uploaded, upload the 40kCoreRules.txt file to the vector store
-    if not file_uploaded:
-        with open(file_name, "rb") as file_stream:
-            client.beta.vector_stores.file_batches.upload_and_poll(
-                vector_store_id=vector_store_id, files=[file_stream]
-            )
+    with open(file_name, "rb") as file_stream:
+        client.beta.vector_stores.file_batches.upload_and_poll(
+            vector_store_id=vector_store_id, files=[file_stream]
+        )
 
 def create_or_get_thread(mode):
     """Create a new thread if one doesn't exist or return the existing one."""
-    if mode not in current_threads:
-        current_threads[mode] = client.beta.threads.create()
-    return current_threads[mode]
+    thread_id = redis_client.get(f"thread:{mode}")
+    if not thread_id:
+        thread = client.beta.threads.create()
+        redis_client.set(f"thread:{mode}", thread.id)
+        return thread
+    return client.beta.threads.retrieve(thread_id.decode())
 
 async def send_long_message(channel, content):
     """Handle sending long messages split into smaller chunks to fit Discord's message limit."""
@@ -256,25 +220,11 @@ async def send_dalle_image(channel, image_url):
     embed.set_image(url=image_url)  # Set the image in the embed
     await channel.send(embed=embed)  # Send the embed
 
-def get_user_model_and_size(member):
-    """Determine the model and image size based on the user's roles."""
-    role_names = [role.name for role in member.roles]
-    if any(role in role_names for role in ["King", "Admin"]):
-        model = "gpt-4o"
-        image_model = "dall-e-3"
-        size = "1024x1024"
-    else:
-        model = "gpt-4o-mini"
-        image_model = "dall-e-2"
-        size = "512x512"
-    return model, image_model, size
-
-
-#Initialize default assistant
+# Initialize default assistant
 assistant_default = get_or_create_assistant("default")
 thread_default = create_or_get_thread("default")
 
-#initialize 40kref assistant with file reference
+# Initialize 40kref assistant with file reference
 vector_store_id = get_or_create_vector_store()
 ensure_file_uploaded(vector_store_id, "40kCoreRules.txt")
 
@@ -292,14 +242,6 @@ async def on_message(message):
 
     # Log the incoming message
     logger.info(f"Received message from {message.author}")
-
-    # Determine model and image size based on roles
-    if isinstance(message.channel, discord.DMChannel):
-        member = message.author  # In DMs, message.author represents the member
-    else:
-        member = message.guild.get_member(message.author.id)
-
-    model, image_model, size = get_user_model_and_size(member)
 
     # Check and reset the user's request counts if necessary
     check_and_reset_user_count(user_id)
@@ -359,18 +301,22 @@ async def on_message(message):
             await message.channel.send("Warhammer 40k Ref mode activated. I will respond to all messages in this channel related to Warhammer 40k until someone says '!stop'.")
 
     if message.content.startswith("!make"):
-        if user_request_data[user_id]['image_count'] >= IMAGE_REQUEST_LIMIT:
+        user_data = get_user_data(user_id)
+        if user_data['image_count'] >= IMAGE_REQUEST_LIMIT:
             wait_time = time_until_reset(user_id, 'last_image_reset')
             await message.channel.send(f"Sorry, you've reached the maximum number of image requests allowed for today. Please wait {wait_time} before trying again.")
             return
 
         try:
-            user_request_data[user_id]['image_count'] += 1
-            save_user_request_data()
+            user_data['image_count'] += 1
+            save_user_data(user_id, user_data)
+
+            model = "dall-e-3"
+            size = "1024x1024"
 
             prompt = message.content[len("!make "):].strip()
             response = client.images.generate(
-                model=image_model,
+                model=model,
                 prompt=prompt,
                 size=size,
                 n=1
@@ -396,14 +342,17 @@ async def on_message(message):
             await message.channel.send(f"Sorry, something went wrong: {e}")
 
     elif message.content.startswith("!ask"):
-        if user_request_data[user_id]['count'] >= REQUEST_LIMIT:
+        user_data = get_user_data(user_id)
+        if user_data['count'] >= REQUEST_LIMIT:
             wait_time = time_until_reset(user_id, 'last_reset')
             await message.channel.send(f"Sorry, you've reached the maximum number of requests allowed for today. Please wait {wait_time} before trying again.")
             return
 
         try:
-            user_request_data[user_id]['count'] += 1
-            save_user_request_data()
+            user_data['count'] += 1
+            save_user_data(user_id, user_data)
+
+            model = "gpt-4"
 
             response = client.chat.completions.create(
                 model=model,

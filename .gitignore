@@ -74,6 +74,7 @@ instance/
 # Sphinx documentation
 docs/_build/
 
-assistant_ids.json
+*.json
+!ascii_emoji.json
 
 *.lock

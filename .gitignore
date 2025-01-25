@@ -76,5 +76,3 @@ docs/_build/
 
 *.json
 !ascii_emoji.json
-
-*.lock

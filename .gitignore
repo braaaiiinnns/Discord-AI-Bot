@@ -1,2 +1,79 @@
+# Byte-compiled / optimized / compiled Python files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+env/
+venv/
+ENV/
+.venv/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+.coverage
+*.cover
+.hypothesis/
+.tox/
+.nox/
+.pytest_cache/
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# PyCharm
+*.iml
+*.iws
+*.ipr
 .DS_Store
-.env
+
+# PyInstaller
+# Usually these files are written by a Python application that is packaged with PyInstaller
+*.manifest
+*.spec
+
+# Logs and debugging files
+*.log
+*.out
+*.err
+logs/
+
+# Local configuration files
+*.env
+.env.*
+*.ini
+*.cfg
+
+# MacOS-specific files
+.DS_Store
+
+# Windows-specific files
+Thumbs.db
+
+# Flask/Django specific
+instance/
+.webassets-cache/
+
+# Sphinx documentation
+docs/_build/
+
+assistant_ids.json
+
+*.lock

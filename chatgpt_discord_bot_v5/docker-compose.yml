@@ -1,0 +1,13 @@
+
+version: "3.8"
+
+services:
+  discord_bot:
+    build: .
+    container_name: discord_bot_container
+    environment:
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

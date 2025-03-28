@@ -1,5 +1,6 @@
-
-discord.py
+discord.py==2.3.2
+openai
 python-dotenv
 colorama
-openai
+google-genai
+anthropic

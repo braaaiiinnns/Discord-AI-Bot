@@ -1,18 +1,14 @@
-
-# Use the official Python image with a slim base for minimal size
 FROM python:3.10-slim
 
-# Set the working directory in the container
+# Set working directory
 WORKDIR /app
 
-# Copy the project files into the container
-COPY . /app
-
-# Install dependencies
+# Copy requirements file and install dependencies
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port (if necessary, for example if using webhooks)
-EXPOSE 8080
+# Copy the entire project into the container
+COPY . .
 
-# Run the bot
-CMD ["python", "bot.py"]
+# Run the bot (adjust the command if you need a different entry point)
+CMD ["python", "main.py"]

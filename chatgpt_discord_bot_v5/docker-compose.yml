@@ -1,13 +1,14 @@
-
-version: "3.8"
+version: '3.9'
 
 services:
   discord_bot:
     build: .
-    container_name: discord_bot_container
+    container_name: discord_bot
+    restart: always
     environment:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_GENAI_API_KEY=${GOOGLE_GENAI_API_KEY}
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
     volumes:
-      - ./data:/app/data
-    restart: unless-stopped
+      - .:/app

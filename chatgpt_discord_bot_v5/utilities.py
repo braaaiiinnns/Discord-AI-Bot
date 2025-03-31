@@ -73,3 +73,7 @@ async def check_request_limit(message, user_data, request_limit):
     user_data[user_id]['count'] += 1
     save_user_request_data(user_data)
     return True
+
+def compose_text_response(question: str, answer: str) -> str:
+    """Compose a text response that shows both the question and answer."""
+    return f"**Question:** {question}\n**Answer:** {answer}"

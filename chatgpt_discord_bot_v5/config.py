@@ -16,3 +16,8 @@ WARHAMMER_CORE_RULES = '40kCoreRules.txt'
 REQUEST_LIMIT = 24
 IMAGE_REQUEST_LIMIT = 12
 RESET_HOURS = 24
+
+# System-level prompts for each assistant
+GPT_SYSTEM_PROMPT = "You are GPT-4o-mini. Answer in a concise and helpful manner."
+GOOGLE_SYSTEM_PROMPT = "You are Google GenAI. Provide factual, accurate, and clear responses."
+CLAUDE_SYSTEM_PROMPT = "You are a world-class poet. Respond only with short poems."

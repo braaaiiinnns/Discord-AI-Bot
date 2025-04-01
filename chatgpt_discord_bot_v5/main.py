@@ -43,7 +43,7 @@ async def on_ready():
     await tree.sync()
     logger.info(f"Logged in as {client.user}")
 
-@tree.command(name="ask", description="Ask GPT-4o-mini a question")
+@tree.command(name="ask_gpt", description="Ask GPT-4o-mini a question")
 async def ask(interaction: discord.Interaction, question: str):
     uid = str(interaction.user.id)
     bot_state.user_request_data = check_and_reset_user_count(uid, bot_state.user_request_data)

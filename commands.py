@@ -1,6 +1,6 @@
 import logging
-from utilities import time_until_reset, save_user_request_data, check_request_limit, compose_text_response, split_message, check_and_reset_user_count
-from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, SUMMARY_CHANNEL_ID, REQUEST_LIMIT
+from utilities import compose_text_response, split_message, check_and_reset_user_count
+from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, SUMMARY_CHANNEL_ID, REQUEST_LIMIT, GOOGLE_GENAI_API_KEY
 from state import BotState
 from clients import get_google_genai_client
 
@@ -8,7 +8,7 @@ logger = logging.getLogger('discord_bot')
 
 # Initialize bot_state and google_client
 bot_state = BotState(timeout=3600)
-google_client = get_google_genai_client()
+google_client = get_google_genai_client(GOOGLE_GENAI_API_KEY)
 
 # For OpenAI's GPT-4o-mini, include a system message.
 async def handle_ask_command_slash(prompt: str, openai_client, user_data, request_limit, user_id: str):

@@ -1,8 +1,9 @@
 import json
 import os
 from datetime import datetime, timedelta
-from config import REQUEST_COUNT_FILE, RESET_HOURS
+from config import REQUEST_COUNT_FILE, RESET_HOURS, DEFAULT_SUMMARY_LIMIT
 import logging
+from commands import handle_google_command_slash
 
 logger = logging.getLogger('discord_bot')
 
@@ -74,6 +75,22 @@ async def check_request_limit(message, user_data, request_limit):
     save_user_request_data(user_data)
     return True
 
-def compose_text_response(question: str, answer: str) -> str:
-    """Compose a text response that shows both the question and answer."""
-    return f"**Question:** {question}\n**Answer:** {answer}"
+def compose_text_response(prompt: str, answer: str) -> str:
+    """Compose a text response that shows both the prompt and reply."""
+    return f"**Prompt:** {prompt}\n**Answer:** {answer}"
+
+def split_message(content: str, limit: int = 2000):
+    """Split content into chunks of up to 2000 characters."""
+    if len(content) <= limit:
+        return [content]
+    return [content[i : i + limit] for i in range(0, len(content), limit)]
+
+async def summarize_response(response: str, google_client) -> str:
+    """Summarize the response to be under the DEFAULT_SUMMARY_LIMIT using Google GenAI."""
+    try:
+        summary_prompt = f"Summarize the following text to less than {DEFAULT_SUMMARY_LIMIT} characters:\n\n{response}"
+        summary = await handle_google_command_slash(summary_prompt, google_client, {}, 0, "summary")
+        return summary.strip()
+    except Exception as e:
+        logger.error(f"Error summarizing response: {e}")
+        return "Error summarizing response."

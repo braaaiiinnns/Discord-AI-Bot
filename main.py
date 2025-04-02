@@ -34,7 +34,15 @@ async def on_ready():
     await tree.sync()
     logger.info(f"Logged in as {client.user}")
 
-@tree.command(name="ask_gpt", description="Ask GPT-4o-mini a question")
+# Create a command group for /ask
+class AskGroup(app_commands.Group):
+    """Group for /ask commands."""
+    def __init__(self):
+        super().__init__(name="ask", description="Ask various AI models")
+
+ask_group = AskGroup()
+
+@ask_group.command(name="gpt", description="Ask GPT-4o-mini a question")
 async def ask_gpt(interaction: discord.Interaction, question: str):
     uid = str(interaction.user.id)
     global user_request_data
@@ -50,41 +58,49 @@ async def ask_gpt(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(full_response)
     except Exception as e:
-        logger.error(f"Error in /ask_gpt command: {e}")
+        logger.error(f"Error in /ask gpt command: {e}")
         await interaction.followup.send("An error occurred while processing your request. Please try again later.")
 
-@tree.command(name="ask_google", description="Ask Google GenAI a question")
+@ask_group.command(name="google", description="Ask Google GenAI a question")
 async def ask_google(interaction: discord.Interaction, question: str):
     uid = str(interaction.user.id)
     global user_request_data
     user_request_data = check_and_reset_user_count(uid, user_request_data)
     
     await interaction.response.defer()
-    result = await handle_google_command_slash(question, google_client, user_request_data, REQUEST_LIMIT, uid)
-    full_response = compose_text_response(question, result)
-    if len(full_response) > 2000:
-        for chunk in split_message(full_response):
-            await interaction.followup.send(chunk)
-    else:
-        await interaction.followup.send(full_response)
+    try:
+        result = await handle_google_command_slash(question, google_client, user_request_data, REQUEST_LIMIT, uid)
+        full_response = compose_text_response(question, result)
+        if len(full_response) > 2000:
+            for chunk in split_message(full_response):
+                await interaction.followup.send(chunk)
+        else:
+            await interaction.followup.send(full_response)
+    except Exception as e:
+        logger.error(f"Error in /ask google command: {e}")
+        await interaction.followup.send("An error occurred while processing your request. Please try again later.")
 
-@tree.command(name="ask_claude", description="Ask Claude (as a poet) a question")
+@ask_group.command(name="claude", description="Ask Claude (as a poet) a question")
 async def ask_claude(interaction: discord.Interaction, question: str):
     uid = str(interaction.user.id)
     global user_request_data
     user_request_data = check_and_reset_user_count(uid, user_request_data)
     
     await interaction.response.defer()
-    result = await handle_claude_command_slash(question, claude_client, user_request_data, REQUEST_LIMIT, uid)
-    full_response = compose_text_response(question, result)
-    if len(full_response) > 2000:
-        for chunk in split_message(full_response):
-            await interaction.followup.send(chunk)
-    else:
-        await interaction.followup.send(full_response)
+    try:
+        result = await handle_claude_command_slash(question, claude_client, user_request_data, REQUEST_LIMIT, uid)
+        full_response = compose_text_response(question, result)
+        if len(full_response) > 2000:
+            for chunk in split_message(full_response):
+                await interaction.followup.send(chunk)
+        else:
+            await interaction.followup.send(full_response)
+    except Exception as e:
+        logger.error(f"Error in /ask claude command: {e}")
+        await interaction.followup.send("An error occurred while processing your request. Please try again later.")
 
-@tree.command(name="make", description="Generate an image using DALL-E-3")
-async def make(interaction: discord.Interaction, prompt: str):
+@ask_group.command(name="dall-e", description="Generate an image using DALL-E-3")
+async def ask_dalle(interaction: discord.Interaction, prompt: str):
     await interaction.response.defer()
     try:
         image_url = await handle_make_command_slash(prompt, openai_client)
@@ -93,8 +109,11 @@ async def make(interaction: discord.Interaction, prompt: str):
         embed.set_image(url=image_url)
         await interaction.followup.send(embed=embed)
     except Exception as e:
-        logger.error(f"Error in /make command: {e}")
+        logger.error(f"Error in /ask dall-e command: {e}")
         await interaction.followup.send("An error occurred while processing your request. Please try again later.")
+
+# Add the group to the command tree
+tree.add_command(ask_group)
 
 @tree.command(name="clear_history", description="Clear your conversation history")
 async def clear_history(interaction: discord.Interaction):

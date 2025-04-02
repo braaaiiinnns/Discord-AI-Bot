@@ -70,18 +70,28 @@ async def handle_prompt_command(interaction, prompt, handler, client, descriptio
     
     await interaction.response.defer()
     try:
+        # Get the result from the handler
         result = await handler(prompt, client, bot_state.user_request_data, REQUEST_LIMIT, uid)
         full_response = compose_text_response(prompt, result)
         
-        if len(full_response) > DEFAULT_SUMMARY_LIMIT and interaction.channel_id != SUMMARY_CHANNEL_ID:
+        # Debugging: Log the channel IDs
+        logger.debug(f"Interaction channel ID: {interaction.channel_id}")
+        logger.debug(f"Summary channel ID: {SUMMARY_CHANNEL_ID}")
+        
+        # Check if the response exceeds the summary limit and is not in the summary channel
+        if len(full_response) > DEFAULT_SUMMARY_LIMIT and int(interaction.channel_id) != int(SUMMARY_CHANNEL_ID):
+            # Summarize the response
             summary = await summarize_response(full_response, google_client)
-            await interaction.followup.send(summary)
+            await interaction.followup.send(summary)  # Send the summary to the user
+            
+            # Send the full response to the summary channel
             summary_channel = client.get_channel(SUMMARY_CHANNEL_ID)
             if summary_channel:
                 await summary_channel.send(f"**Original response for {interaction.user.mention}:**\n{full_response}")
             else:
                 logger.error(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found.")
         else:
+            # Send the full response to the user (split if too long)
             if len(full_response) > 2000:
                 for chunk in split_message(full_response):
                     await interaction.followup.send(chunk)

@@ -1,5 +1,5 @@
 import logging
-from utilities import time_until_reset, save_user_request_data, check_request_limit, compose_text_response, split_message, check_and_reset_user_count, summarize_response
+from utilities import time_until_reset, save_user_request_data, check_request_limit, compose_text_response, split_message, check_and_reset_user_count
 from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, SUMMARY_CHANNEL_ID, REQUEST_LIMIT
 from state import BotState
 from clients import get_google_genai_client
@@ -90,3 +90,14 @@ async def handle_prompt_command(interaction, prompt, handler, client, descriptio
     except Exception as e:
         logger.error(f"Error in {description}: {e}")
         await interaction.followup.send("An error occurred while processing your request. Please try again later.")
+
+async def summarize_response(response: str, google_client) -> str:
+    """Summarize the response to be under the DEFAULT_SUMMARY_LIMIT using Google GenAI."""
+    from config import DEFAULT_SUMMARY_LIMIT  # Import locally to avoid circular dependencies
+    try:
+        summary_prompt = f"Summarize the following text to less than {DEFAULT_SUMMARY_LIMIT} characters:\n\n{response}"
+        summary = await handle_google_command_slash(summary_prompt, google_client, {}, 0, "summary")
+        return summary.strip()
+    except Exception as e:
+        logger.error(f"Error summarizing response: {e}")
+        return "Error summarizing response."

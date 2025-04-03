@@ -16,7 +16,7 @@ RESET_HOURS = 24
 
 # Channel and summary settings.
 DEFAULT_SUMMARY_LIMIT = 250  # Character limit for summaries.
-SUMMARY_CHANNEL_ID = 1272268347429355692  # Channel ID for posting full responses.
+SUMMARY_CHANNEL_ID = os.getenv('SUMMARY_CHANNEL_ID')  # Channel ID for posting full responses.
 
 # File names.
 REQUEST_COUNT_FILE = 'user_requests.json'

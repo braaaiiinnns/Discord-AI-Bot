@@ -98,7 +98,13 @@ async def handle_prompt_command(interaction, prompt, handler, client, descriptio
                 logger.info(f"Sending full response to summary channel for user {interaction.user}")
                 await summary_channel.send(f"**Original response for {interaction.user.mention}:**\n{full_response}")
             else:
+                # Debugging: Log available guilds and channels
                 logger.error(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found.")
+                logger.debug("Available guilds and channels:")
+                for guild in interaction.client.guilds:
+                    logger.debug(f"Guild: {guild.name} (ID: {guild.id})")
+                    for channel in guild.channels:
+                        logger.debug(f"  Channel: {channel.name} (ID: {channel.id})")
         else:
             # Send the full response to the user (split if too long)
             if len(full_response) > 2000:

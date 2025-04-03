@@ -1,6 +1,11 @@
 import logging
 from utilities import compose_text_response, split_message, check_and_reset_user_count
 from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, SUMMARY_CHANNEL_ID, REQUEST_LIMIT, GOOGLE_GENAI_API_KEY
+
+
+# Ensure DEFAULT_SUMMARY_LIMIT is explicitly imported and validated
+if not isinstance(DEFAULT_SUMMARY_LIMIT, int) or DEFAULT_SUMMARY_LIMIT <= 0:
+    raise ValueError("DEFAULT_SUMMARY_LIMIT must be a positive integer.")
 from state import BotState
 from clients import get_google_genai_client
 
@@ -63,58 +68,23 @@ async def handle_make_command_slash(prompt: str, openai_client):
     image_url = response.data[0].url
     return image_url
 
-async def handle_prompt_command(interaction, prompt, handler, client, description):
-    """Handles the common logic for prompt-based commands."""
+async def handle_prompt_command(interaction, prompt, handler, client, description, google_client):
+    """
+    Handles the common logic for prompt-based commands.
+    Calls the provided handler to generate a response, then routes it.
+    """
     logger.info(f"Handling {description} for user {interaction.user} with prompt: {prompt}")
-    logger.debug(f"Interaction channel: {interaction.channel}, Channel ID: {interaction.channel_id}")
-    
-    # Retrieve the user state from bot_state
     uid = str(interaction.user.id)
-    user_state = bot_state.get_user_state(uid)
     
-    # Check and reset user request count
-    user_state.request_data = check_and_reset_user_count(uid, user_state.request_data)
-    
+    # Defer response immediately.
     await interaction.response.defer()
     try:
-        # Get the result from the handler
-        result = await handler(prompt, client, user_state.request_data, REQUEST_LIMIT, uid)
-        logger.info(f"Result for {description} (user {interaction.user}): {result}")
-        full_response = compose_text_response(prompt, result)
-        
-        # Debugging: Log the channel IDs
-        logger.debug(f"Interaction channel ID: {interaction.channel_id}")
-        logger.debug(f"Summary channel ID: {SUMMARY_CHANNEL_ID}")
-        
-        # Check if the response exceeds the summary limit and is not in the summary channel
-        if len(full_response) > DEFAULT_SUMMARY_LIMIT and int(interaction.channel_id) != int(SUMMARY_CHANNEL_ID):
-            logger.info(f"Summarizing response for user {interaction.user}")
-            summary = await summarize_response(full_response, google_client)
-            await interaction.followup.send(summary)  # Send the summary to the user
-            
-            # Send the full response to the summary channel
-            summary_channel = interaction.client.get_channel(SUMMARY_CHANNEL_ID)  # Use interaction.client
-            if summary_channel:
-                logger.info(f"Sending full response to summary channel for user {interaction.user}")
-                await summary_channel.send(f"**Original response for {interaction.user.mention}:**\n{full_response}")
-            else:
-                # Debugging: Log available guilds and channels
-                logger.error(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found.")
-                logger.debug("Available guilds and channels:")
-                for guild in interaction.client.guilds:
-                    logger.debug(f"Guild: {guild.name} (ID: {guild.id})")
-                    for channel in guild.channels:
-                        logger.debug(f"  Channel: {channel.name} (ID: {channel.id})")
-        else:
-            # Send the full response to the user (split if too long)
-            if len(full_response) > 2000:
-                logger.info(f"Splitting long response for user {interaction.user}")
-                for chunk in split_message(full_response):
-                    await interaction.followup.send(chunk)
-            else:
-                await interaction.followup.send(full_response)
+        result = await handler(prompt, client, {}, 0, uid)
+        full_response = result  # Here you might combine context if needed.
+        logger.info(f"Generated response for {description}: {full_response}")
+        await route_response(interaction, prompt, full_response, google_client)
     except Exception as e:
-        logger.error(f"Error in {description} for user {interaction.user}: {e}")
+        logger.error(f"Error in {description} for user {interaction.user}: {e}", exc_info=True)
         await interaction.followup.send("An error occurred while processing your request. Please try again later.")
 
 async def summarize_response(response: str, google_client) -> str:
@@ -127,5 +97,44 @@ async def summarize_response(response: str, google_client) -> str:
         logger.info(f"Generated summary: {summary}")
         return summary.strip()
     except Exception as e:
-        logger.error(f"Error summarizing response: {e}")
+        logger.error(f"Error summarizing response: {e}", exc_info=True)
         return "Error summarizing response."
+
+
+async def route_response(interaction, prompt: str, full_response: str, google_client):
+    """
+    Routes the response based on length and channel:
+      - If full_response is longer than DEFAULT_SUMMARY_LIMIT and the command wasn't used in the summary channel:
+         1. Generate a summary and send it to the user.
+         2. Post the full response to the summary channel.
+      - Otherwise, send the full response (chunked if necessary) to the user.
+    """
+    # First, compose the text version (question + answer) if desired.
+    combined = compose_text_response(prompt, full_response)
+    
+    # Check if we need to summarize.
+    if len(combined) > DEFAULT_SUMMARY_LIMIT and int(interaction.channel_id) != int(SUMMARY_CHANNEL_ID):
+        logger.info("Response exceeds summary limit; generating summary.")
+        summary = await summarize_response(combined, google_client)
+        summary_response = compose_text_response(prompt, summary)
+        await interaction.followup.send(summary_response)
+        # Now, post the full response in the summary channel.
+        summary_channel = interaction.client.get_channel(SUMMARY_CHANNEL_ID)
+        if summary_channel:
+            logger.info(f"Posting full response to summary channel (ID: {SUMMARY_CHANNEL_ID}).")
+            # If the full response is too long for a single message, split it.
+            full_chunks = split_message(combined)
+            for chunk in full_chunks:
+                await summary_channel.send(chunk)
+        else:
+            logger.error(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found.")
+            # Fallback: send full response as followup messages.
+            for chunk in split_message(combined):
+                await interaction.followup.send(chunk)
+    else:
+        # Otherwise, just send the full response.
+        if len(combined) > 2000:
+            for chunk in split_message(combined):
+                await interaction.followup.send(chunk)
+        else:
+            await interaction.followup.send(combined)

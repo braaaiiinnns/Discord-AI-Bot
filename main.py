@@ -57,7 +57,8 @@ async def ask_gpt(interaction: discord.Interaction, question: str):
         prompt=question,
         handler=handle_ask_command_slash,
         client=openai_client,
-        description="GPT-4o-mini"
+        description="GPT-4o-mini",
+        google_client=google_client
     )
 
 @ask_group.command(name="google", description="Ask Google GenAI a question")
@@ -68,7 +69,8 @@ async def ask_google(interaction: discord.Interaction, question: str):
         prompt=question,
         handler=handle_google_command_slash,
         client=google_client,
-        description="Google GenAI"
+        description="Google GenAI",
+        google_client=google_client
     )
 
 @ask_group.command(name="claude", description="Ask Claude (as a poet) a question")
@@ -79,7 +81,8 @@ async def ask_claude(interaction: discord.Interaction, question: str):
         prompt=question,
         handler=handle_claude_command_slash,
         client=claude_client,
-        description="Claude"
+        description="Claude",
+        google_client=google_client
     )
 
 @ask_group.command(name="dall-e", description="Generate an image using DALL-E-3")

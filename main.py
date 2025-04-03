@@ -51,6 +51,7 @@ ask_group = AskGroup()
 @ask_group.command(name="gpt", description="Ask GPT-4o-mini a question")
 async def ask_gpt(interaction: discord.Interaction, question: str):
     logger.info(f"User {interaction.user} invoked /ask gpt with question: {question}")
+    logger.debug(f"Interaction channel: {interaction.channel}, Channel ID: {interaction.channel_id}")
     uid = str(interaction.user.id)
     global user_request_data
     user_request_data = check_and_reset_user_count(uid, user_request_data)
@@ -72,6 +73,7 @@ async def ask_gpt(interaction: discord.Interaction, question: str):
 @ask_group.command(name="google", description="Ask Google GenAI a question")
 async def ask_google(interaction: discord.Interaction, question: str):
     logger.info(f"User {interaction.user} invoked /ask google with question: {question}")
+    logger.debug(f"Interaction channel: {interaction.channel}, Channel ID: {interaction.channel_id}")
     uid = str(interaction.user.id)
     global user_request_data
     user_request_data = check_and_reset_user_count(uid, user_request_data)
@@ -93,6 +95,7 @@ async def ask_google(interaction: discord.Interaction, question: str):
 @ask_group.command(name="claude", description="Ask Claude (as a poet) a question")
 async def ask_claude(interaction: discord.Interaction, question: str):
     logger.info(f"User {interaction.user} invoked /ask claude with question: {question}")
+    logger.debug(f"Interaction channel: {interaction.channel}, Channel ID: {interaction.channel_id}")
     uid = str(interaction.user.id)
     global user_request_data
     user_request_data = check_and_reset_user_count(uid, user_request_data)
@@ -114,6 +117,7 @@ async def ask_claude(interaction: discord.Interaction, question: str):
 @ask_group.command(name="dall-e", description="Generate an image using DALL-E-3")
 async def ask_dalle(interaction: discord.Interaction, prompt: str):
     logger.info(f"User {interaction.user} invoked /ask dall-e with prompt: {prompt}")
+    logger.debug(f"Interaction channel: {interaction.channel}, Channel ID: {interaction.channel_id}")
     await interaction.response.defer()
     try:
         image_url = await handle_make_command_slash(prompt, openai_client)

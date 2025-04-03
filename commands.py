@@ -66,6 +66,7 @@ async def handle_make_command_slash(prompt: str, openai_client):
 async def handle_prompt_command(interaction, prompt, handler, client, description):
     """Handles the common logic for prompt-based commands."""
     logger.info(f"Handling {description} for user {interaction.user} with prompt: {prompt}")
+    logger.debug(f"Interaction channel: {interaction.channel}, Channel ID: {interaction.channel_id}")
     uid = str(interaction.user.id)
     bot_state.user_request_data = check_and_reset_user_count(uid, bot_state.user_request_data)
     

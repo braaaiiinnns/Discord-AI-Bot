@@ -93,7 +93,7 @@ async def handle_prompt_command(interaction, prompt, handler, client, descriptio
             await interaction.followup.send(summary)  # Send the summary to the user
             
             # Send the full response to the summary channel
-            summary_channel = client.get_channel(SUMMARY_CHANNEL_ID)
+            summary_channel = interaction.client.get_channel(SUMMARY_CHANNEL_ID)  # Use interaction.client
             if summary_channel:
                 logger.info(f"Sending full response to summary channel for user {interaction.user}")
                 await summary_channel.send(f"**Original response for {interaction.user.mention}:**\n{full_response}")

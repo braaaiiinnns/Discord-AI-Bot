@@ -7,23 +7,28 @@ import logging
 logger = logging.getLogger('discord_bot')
 
 def load_user_request_data():
+    logger.info("Loading user request data")
     if os.path.exists(REQUEST_COUNT_FILE):
         with open(REQUEST_COUNT_FILE, 'r') as file:
             return json.load(file)
     else:
+        logger.warning("Request count file not found. Creating a new one.")
         data = {}
         with open(REQUEST_COUNT_FILE, 'w') as file:
             json.dump(data, file)
         return data
 
 def save_user_request_data(data):
+    logger.info("Saving user request data")
     with open(REQUEST_COUNT_FILE, 'w') as file:
         json.dump(data, file)
 
 def check_and_reset_user_count(user_id, user_data):
+    logger.info(f"Checking and resetting request count for user {user_id}")
     from datetime import datetime, timedelta
     now = datetime.now()
     if user_id not in user_data:
+        logger.info(f"Initializing request data for new user {user_id}")
         user_data[user_id] = {
             'count': 0,
             'image_count': 0,
@@ -41,6 +46,7 @@ def check_and_reset_user_count(user_id, user_data):
         last_reset = datetime.fromisoformat(user_data[user_id]['last_reset'])
         last_image_reset = datetime.fromisoformat(user_data[user_id]['last_image_reset'])
         if now - last_reset > timedelta(hours=RESET_HOURS):
+            logger.info(f"Resetting request count for user {user_id}")
             user_data[user_id]['count'] = 0
             user_data[user_id]['last_reset'] = now.isoformat()
         if now - last_image_reset > timedelta(hours=RESET_HOURS):

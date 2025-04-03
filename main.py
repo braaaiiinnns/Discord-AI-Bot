@@ -11,6 +11,7 @@ from commands import (
     handle_google_command_slash,
     handle_claude_command_slash,
     handle_make_command_slash,
+    handle_prompt_command,
 )
 
 logger = setup_logger()
@@ -51,84 +52,46 @@ ask_group = AskGroup()
 @ask_group.command(name="gpt", description="Ask GPT-4o-mini a question")
 async def ask_gpt(interaction: discord.Interaction, question: str):
     logger.info(f"User {interaction.user} invoked /ask gpt with question: {question}")
-    logger.debug(f"Interaction channel: {interaction.channel}, Channel ID: {interaction.channel_id}")
-    uid = str(interaction.user.id)
-    global user_request_data
-    user_request_data = check_and_reset_user_count(uid, user_request_data)
-    
-    await interaction.response.defer()
-    try:
-        result = await handle_ask_command_slash(question, openai_client, user_request_data, REQUEST_LIMIT, uid)
-        logger.info(f"GPT response for user {interaction.user}: {result}")
-        full_response = compose_text_response(question, result)
-        if len(full_response) > 2000:
-            for chunk in split_message(full_response):
-                await interaction.followup.send(chunk)
-        else:
-            await interaction.followup.send(full_response)
-    except Exception as e:
-        logger.error(f"Error in /ask gpt command for user {interaction.user}: {e}")
-        await interaction.followup.send("An error occurred while processing your request. Please try again later.")
+    await handle_prompt_command(
+        interaction=interaction,
+        prompt=question,
+        handler=handle_ask_command_slash,
+        client=openai_client,
+        description="GPT-4o-mini"
+    )
 
 @ask_group.command(name="google", description="Ask Google GenAI a question")
 async def ask_google(interaction: discord.Interaction, question: str):
     logger.info(f"User {interaction.user} invoked /ask google with question: {question}")
-    logger.debug(f"Interaction channel: {interaction.channel}, Channel ID: {interaction.channel_id}")
-    uid = str(interaction.user.id)
-    global user_request_data
-    user_request_data = check_and_reset_user_count(uid, user_request_data)
-    
-    await interaction.response.defer()
-    try:
-        result = await handle_google_command_slash(question, google_client, user_request_data, REQUEST_LIMIT, uid)
-        logger.info(f"Google GenAI response for user {interaction.user}: {result}")
-        full_response = compose_text_response(question, result)
-        if len(full_response) > 2000:
-            for chunk in split_message(full_response):
-                await interaction.followup.send(chunk)
-        else:
-            await interaction.followup.send(full_response)
-    except Exception as e:
-        logger.error(f"Error in /ask google command for user {interaction.user}: {e}")
-        await interaction.followup.send("An error occurred while processing your request. Please try again later.")
+    await handle_prompt_command(
+        interaction=interaction,
+        prompt=question,
+        handler=handle_google_command_slash,
+        client=google_client,
+        description="Google GenAI"
+    )
 
 @ask_group.command(name="claude", description="Ask Claude (as a poet) a question")
 async def ask_claude(interaction: discord.Interaction, question: str):
     logger.info(f"User {interaction.user} invoked /ask claude with question: {question}")
-    logger.debug(f"Interaction channel: {interaction.channel}, Channel ID: {interaction.channel_id}")
-    uid = str(interaction.user.id)
-    global user_request_data
-    user_request_data = check_and_reset_user_count(uid, user_request_data)
-    
-    await interaction.response.defer()
-    try:
-        result = await handle_claude_command_slash(question, claude_client, user_request_data, REQUEST_LIMIT, uid)
-        logger.info(f"Claude response for user {interaction.user}: {result}")
-        full_response = compose_text_response(question, result)
-        if len(full_response) > 2000:
-            for chunk in split_message(full_response):
-                await interaction.followup.send(chunk)
-        else:
-            await interaction.followup.send(full_response)
-    except Exception as e:
-        logger.error(f"Error in /ask claude command for user {interaction.user}: {e}")
-        await interaction.followup.send("An error occurred while processing your request. Please try again later.")
+    await handle_prompt_command(
+        interaction=interaction,
+        prompt=question,
+        handler=handle_claude_command_slash,
+        client=claude_client,
+        description="Claude"
+    )
 
 @ask_group.command(name="dall-e", description="Generate an image using DALL-E-3")
 async def ask_dalle(interaction: discord.Interaction, prompt: str):
     logger.info(f"User {interaction.user} invoked /ask dall-e with prompt: {prompt}")
-    logger.debug(f"Interaction channel: {interaction.channel}, Channel ID: {interaction.channel_id}")
-    await interaction.response.defer()
-    try:
-        image_url = await handle_make_command_slash(prompt, openai_client)
-        logger.info(f"DALL-E image URL for user {interaction.user}: {image_url}")
-        text_response = f"**Prompt:** {prompt}"
-        embed = discord.Embed(title="Your Image", description=text_response)
-        embed.set_image(url=image_url)
-        await interaction.followup.send(embed=embed)
-    except Exception as e:
-        logger.error(f"Error in /ask dall-e command for user {interaction.user}: {e}")
-        await interaction.followup.send("An error occurred while processing your request. Please try again later.")
+    await handle_prompt_command(
+        interaction=interaction,
+        prompt=prompt,
+        handler=handle_make_command_slash,
+        client=openai_client,
+        description="DALL-E-3"
+    )
 
 # Add the group to the command tree
 tree.add_command(ask_group)

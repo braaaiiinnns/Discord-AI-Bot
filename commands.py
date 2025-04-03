@@ -128,7 +128,13 @@ async def route_response(interaction, prompt: str, full_response: str, google_cl
             for chunk in full_chunks:
                 await summary_channel.send(chunk)
         else:
-            logger.error(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found.")
+            try:
+                # Attempt to fetch the channel from the API if not cached.
+                summary_channel = await interaction.client.fetch_channel(SUMMARY_CHANNEL_ID)
+            except Exception as e:
+                logger.error(f"Failed to fetch summary channel: {e}", exc_info=True)
+                logger.error(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found.")
+            
             # Debugging: Log available guilds and channels
             logger.debug("Available guilds and channels:")
             for guild in interaction.client.guilds:

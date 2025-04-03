@@ -31,8 +31,18 @@ bot_state = BotState(timeout=3600)
 
 @client.event
 async def on_ready():
+    # Sync the command tree
     await tree.sync()
     logger.info(f"Logged in as {client.user}")
+    
+    # Debugging: Log registered commands
+    logger.info("Registered commands:")
+    for command in tree.get_commands():
+        logger.info(f"- {command.name}")
+
+    # Remove old commands (if necessary)
+    guild = discord.Object(id=discord.Interaction.guild_id)  # Replace with your guild ID if testing in a specific server
+    await tree.clear_commands(guild=guild)
 
 # Create a command group for /ask
 class AskGroup(app_commands.Group):

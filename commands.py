@@ -120,28 +120,27 @@ async def route_response(interaction, prompt: str, full_response: str, google_cl
         await interaction.followup.send(summary_response)
         
         # Now, post the full response in the summary channel.
-        summary_channel = interaction.client.get_channel(SUMMARY_CHANNEL_ID)
-        if summary_channel:
+        try:
+            # Fetch the summary channel using interaction.guild
+            summary_channel = interaction.guild.get_channel(SUMMARY_CHANNEL_ID)
+            if summary_channel is None:
+                logger.error(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found in the guild.")
+                raise ValueError(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found.")
+            
+            # Log the bot's permissions for the summary channel
+            permissions = summary_channel.permissions_for(interaction.guild.me)
+            if not permissions.view_channel or not permissions.send_messages:
+                logger.error(f"Bot lacks permissions for summary channel (ID: {SUMMARY_CHANNEL_ID}).")
+                raise discord.errors.Forbidden(None, "Missing permissions for summary channel.")
+            
             logger.info(f"Posting full response to summary channel (ID: {SUMMARY_CHANNEL_ID}).")
             # If the full response is too long for a single message, split it.
             full_chunks = split_message(combined)
             for chunk in full_chunks:
                 await summary_channel.send(chunk)
-        else:
-            try:
-                # Attempt to fetch the channel from the API if not cached.
-                summary_channel = await interaction.client.fetch_channel(SUMMARY_CHANNEL_ID)
-            except Exception as e:
-                logger.error(f"Failed to fetch summary channel: {e}", exc_info=True)
-                logger.error(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found.")
-            
-            # Debugging: Log available guilds and channels
-            logger.debug("Available guilds and channels:")
-            for guild in interaction.client.guilds:
-                logger.debug(f"Guild: {guild.name} (ID: {guild.id})")
-                for channel in guild.channels:
-                    logger.debug(f"  Channel: {channel.name} (ID: {channel.id})")
-            # Fallback: send full response as followup messages.
+        except Exception as e:
+            logger.error(f"Failed to send message to summary channel: {e}", exc_info=True)
+            # Fallback: send full response as follow-up messages.
             for chunk in split_message(combined):
                 await interaction.followup.send(chunk)
     else:

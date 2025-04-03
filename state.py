@@ -4,21 +4,21 @@ from datetime import datetime, timedelta
 class UserState:
     """Stores the prompt history, context, and request data for a single user."""
     def __init__(self, timeout: int = 3600):
-        self.prompt_history = []  # List of (prompt, timestamp) tuples.
+        self.prompt_history = []  # List of (role, content, timestamp) tuples.
         self.timeout = timeout  # Timeout in seconds (default: 1 hour).
         self.clear_task = None
         self.request_data = {}  # Dictionary to store user-specific request data.
 
-    def add_prompt(self, prompt: str):
-        """Add a prompt and reset the auto-clear timer."""
+    def add_prompt(self, role: str, content: str):
+        """Add a prompt or response and reset the auto-clear timer."""
         self._remove_old_prompts()
-        self.prompt_history.append((prompt, datetime.now()))
+        self.prompt_history.append((role, content, datetime.now()))
         self.reset_clear_timer()
 
-    def get_context(self) -> str:
-        """Return prompt history as a context string."""
+    def get_context(self) -> list:
+        """Return prompt history as a list of dictionaries for conversation context."""
         self._remove_old_prompts()
-        return "\n".join(prompt for prompt, _ in self.prompt_history)
+        return [{"role": role, "content": content} for role, content, _ in self.prompt_history]
 
     def clear_history(self):
         """Clear the prompt history and request data."""
@@ -42,7 +42,7 @@ class UserState:
 
     def _remove_old_prompts(self):
         cutoff = datetime.now() - timedelta(seconds=self.timeout)
-        self.prompt_history = [(p, t) for p, t in self.prompt_history if t > cutoff]
+        self.prompt_history = [(role, content, timestamp) for role, content, timestamp in self.prompt_history if timestamp > cutoff]
 
 class BotState:
     """Manages state for all users."""

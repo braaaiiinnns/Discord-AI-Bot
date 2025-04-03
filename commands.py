@@ -76,13 +76,26 @@ async def handle_prompt_command(interaction, prompt, handler, client, descriptio
     logger.info(f"Handling {description} for user {interaction.user} with prompt: {prompt}")
     uid = str(interaction.user.id)
     
+    # Retrieve the user state
+    user_state = bot_state.get_user_state(uid)
+    
+    # Add the user's prompt to the conversation history
+    user_state.add_prompt("user", prompt)
+    
+    # Get the conversation context
+    context = user_state.get_context()
+    
     # Defer response immediately.
     await interaction.response.defer()
     try:
-        result = await handler(prompt, client, {}, 0, uid)
-        full_response = result  # Here you might combine context if needed.
-        logger.info(f"Generated response for {description}: {full_response}")
-        await route_response(interaction, prompt, full_response, google_client)
+        # Pass the conversation context to the handler
+        result = await handler(context, client, user_state.request_data, REQUEST_LIMIT, uid)
+        
+        # Add the bot's response to the conversation history
+        user_state.add_prompt("assistant", result)
+        
+        logger.info(f"Generated response for {description}: {result}")
+        await route_response(interaction, prompt, result, google_client)
     except Exception as e:
         logger.error(f"Error in {description} for user {interaction.user}: {e}", exc_info=True)
         await interaction.followup.send("An error occurred while processing your request. Please try again later.")

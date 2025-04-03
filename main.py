@@ -104,7 +104,10 @@ async def clear_history(interaction: discord.Interaction):
     logger.info(f"User {interaction.user} invoked /clear_history")
     uid = str(interaction.user.id)
     user_state = bot_state.get_user_state(uid)
+    
+    # Clear the user's history
     user_state.clear_history()
+    
     logger.info(f"Cleared history for user {interaction.user}")
     await interaction.response.send_message("Your conversation history has been cleared.")
 

@@ -1,5 +1,8 @@
 import asyncio
 from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 class UserState:
     """Stores the prompt history, context, and request data for a single user."""
@@ -22,11 +25,13 @@ class UserState:
 
     def clear_history(self):
         """Clear the prompt history and request data."""
+        logger.info("Clearing history for user.")
         self.prompt_history = []
         self.request_data = {}
         if self.clear_task:
             self.clear_task.cancel()
             self.clear_task = None
+        logger.info("History cleared successfully.")
 
     def reset_clear_timer(self):
         if self.clear_task:

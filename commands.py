@@ -120,6 +120,13 @@ async def route_response(interaction, prompt: str, full_response: str, google_cl
         await interaction.followup.send(summary_response)
         
         # Now, post the full response in the summary channel.
+        if interaction.guild is None:
+            logger.error("Interaction is not associated with a guild. Cannot access summary channel.")
+            # Fallback: send full response as follow-up messages.
+            for chunk in split_message(combined):
+                await interaction.followup.send(chunk)
+            return
+        
         try:
             # Fetch the summary channel using interaction.guild
             summary_channel = interaction.guild.get_channel(SUMMARY_CHANNEL_ID)

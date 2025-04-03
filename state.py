@@ -2,11 +2,12 @@ import asyncio
 from datetime import datetime, timedelta
 
 class UserState:
-    """Stores the prompt history and context for a single user."""
+    """Stores the prompt history, context, and request data for a single user."""
     def __init__(self, timeout: int = 3600):
         self.prompt_history = []  # List of (prompt, timestamp) tuples.
         self.timeout = timeout  # Timeout in seconds (default: 1 hour).
         self.clear_task = None
+        self.request_data = {}  # Dictionary to store user-specific request data.
 
     def add_prompt(self, prompt: str):
         """Add a prompt and reset the auto-clear timer."""
@@ -20,8 +21,9 @@ class UserState:
         return "\n".join(prompt for prompt, _ in self.prompt_history)
 
     def clear_history(self):
-        """Clear the prompt history."""
+        """Clear the prompt history and request data."""
         self.prompt_history = []
+        self.request_data = {}
         if self.clear_task:
             self.clear_task.cancel()
             self.clear_task = None

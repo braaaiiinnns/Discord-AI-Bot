@@ -67,13 +67,18 @@ async def handle_prompt_command(interaction, prompt, handler, client, descriptio
     """Handles the common logic for prompt-based commands."""
     logger.info(f"Handling {description} for user {interaction.user} with prompt: {prompt}")
     logger.debug(f"Interaction channel: {interaction.channel}, Channel ID: {interaction.channel_id}")
+    
+    # Retrieve the user state from bot_state
     uid = str(interaction.user.id)
-    bot_state.user_request_data = check_and_reset_user_count(uid, bot_state.user_request_data)
+    user_state = bot_state.get_user_state(uid)
+    
+    # Check and reset user request count
+    user_state.request_data = check_and_reset_user_count(uid, user_state.request_data)
     
     await interaction.response.defer()
     try:
         # Get the result from the handler
-        result = await handler(prompt, client, bot_state.user_request_data, REQUEST_LIMIT, uid)
+        result = await handler(prompt, client, user_state.request_data, REQUEST_LIMIT, uid)
         logger.info(f"Result for {description} (user {interaction.user}): {result}")
         full_response = compose_text_response(prompt, result)
         

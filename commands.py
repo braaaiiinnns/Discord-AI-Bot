@@ -118,6 +118,7 @@ async def route_response(interaction, prompt: str, full_response: str, google_cl
         summary = await summarize_response(combined, google_client)
         summary_response = compose_text_response(prompt, summary)
         await interaction.followup.send(summary_response)
+        
         # Now, post the full response in the summary channel.
         summary_channel = interaction.client.get_channel(SUMMARY_CHANNEL_ID)
         if summary_channel:
@@ -128,6 +129,12 @@ async def route_response(interaction, prompt: str, full_response: str, google_cl
                 await summary_channel.send(chunk)
         else:
             logger.error(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found.")
+            # Debugging: Log available guilds and channels
+            logger.debug("Available guilds and channels:")
+            for guild in interaction.client.guilds:
+                logger.debug(f"Guild: {guild.name} (ID: {guild.id})")
+                for channel in guild.channels:
+                    logger.debug(f"  Channel: {channel.name} (ID: {channel.id})")
             # Fallback: send full response as followup messages.
             for chunk in split_message(combined):
                 await interaction.followup.send(chunk)

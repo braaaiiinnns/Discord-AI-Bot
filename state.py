@@ -26,19 +26,21 @@ class UserState:
     def clear_history(self):
         """Clear the prompt history and request data."""
         logger.info("Clearing history for user.")
-        self.prompt_history = []
-        self.request_data = {}
+        self.prompt_history.clear()  # Explicitly clear the list
+        self.request_data.clear()  # Explicitly clear the dictionary
         if self.clear_task:
             self.clear_task.cancel()
             self.clear_task = None
         logger.info("History cleared successfully.")
 
     def reset_clear_timer(self):
+        """Reset the auto-clear timer for the user's history."""
         if self.clear_task:
             self.clear_task.cancel()
         self.clear_task = asyncio.create_task(self._schedule_clear())
 
     async def _schedule_clear(self):
+        """Schedule the clearing of the user's history after the timeout."""
         try:
             await asyncio.sleep(self.timeout)
             self.clear_history()
@@ -46,6 +48,7 @@ class UserState:
             pass
 
     def _remove_old_prompts(self):
+        """Remove prompts that are older than the timeout period."""
         cutoff = datetime.now() - timedelta(seconds=self.timeout)
         self.prompt_history = [(role, content, timestamp) for role, content, timestamp in self.prompt_history if timestamp > cutoff]
 

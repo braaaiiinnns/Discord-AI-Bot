@@ -84,6 +84,7 @@ async def handle_prompt_command(interaction, prompt, handler, client, descriptio
     
     # Get the conversation context
     context = user_state.get_context()
+    logger.debug(f"Conversation context for user {interaction.user}: {context}")
     
     # Defer response immediately.
     await interaction.response.defer()
@@ -134,11 +135,8 @@ async def route_response(interaction, prompt: str, full_response: str, google_cl
         
         # Now, post the full response in the summary channel.
         if interaction.guild is None:
-            logger.error("Interaction is not associated with a guild. Cannot access summary channel.")
-            # Fallback: send full response as follow-up messages.
-            for chunk in split_message(combined):
-                await interaction.followup.send(chunk)
-            return
+            logger.warning("Interaction is not associated with a guild. Skipping summary channel posting.")
+            return  # Skip posting to the summary channel if no guild is associated.
         
         try:
             # Fetch the summary channel using interaction.guild

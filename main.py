@@ -31,7 +31,6 @@ user_request_data = load_user_request_data()
 bot_state = BotState(timeout=3600)
 
 # Replace with your actual guild ID for testing
-TEST_GUILD_ID = 123456789012345678  # Replace with your actual guild ID
 test_guild = discord.Object(id=TEST_GUILD_ID)
 
 @client.event

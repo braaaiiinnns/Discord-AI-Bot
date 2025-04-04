@@ -1,170 +1,86 @@
+import discord
 import logging
-from utilities import compose_text_response, split_message, check_and_reset_user_count
-from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, SUMMARY_CHANNEL_ID, REQUEST_LIMIT, GOOGLE_GENAI_API_KEY
-
-
-# Ensure DEFAULT_SUMMARY_LIMIT is explicitly imported and validated
-if not isinstance(DEFAULT_SUMMARY_LIMIT, int) or DEFAULT_SUMMARY_LIMIT <= 0:
-    raise ValueError("DEFAULT_SUMMARY_LIMIT must be a positive integer.")
+from utilities import compose_text_response, split_message
+from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT
 from state import BotState
-from clients import get_google_genai_client
 
-logger = logging.getLogger('discord_bot')
+class CommandGroup(discord.app_commands.Group):
+    """Base class for command groups."""
+    def __init__(self, name: str, description: str, bot_state: BotState, logger: logging.Logger):
+        super().__init__(name=name, description=description)
+        self.bot_state = bot_state
+        self.logger = logger
 
-# Initialize bot_state and google_client
-bot_state = BotState(timeout=3600)
-google_client = get_google_genai_client(GOOGLE_GENAI_API_KEY)
+    async def handle_prompt_command(self, interaction, prompt, client, description, system_prompt):
+        """Handle a prompt-based command."""
+        self.logger.info(f"Handling {description} for user {interaction.user} with prompt: {prompt}")
+        uid = str(interaction.user.id)
+        user_state = self.bot_state.get_user_state(uid)
+        user_state.add_prompt("user", prompt)
+        context = user_state.get_context()
 
-# For OpenAI's GPT-4o-mini, include a system message.
-async def handle_ask_command_slash(prompt: str, openai_client, user_data, request_limit, user_id: str):
-    messages = [
-        {"role": "system", "content": GPT_SYSTEM_PROMPT},
-        {"role": "user", "content": prompt}
-    ]
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages
-    )
-    return response.choices[0].message.content.strip()
-
-# For Google GenAI, prepend the system prompt to the user prompt.
-async def handle_google_command_slash(prompt: str, google_client, user_data, request_limit, user_id: str):
-    full_prompt = f"{GOOGLE_SYSTEM_PROMPT}\n{prompt}"
-    response = google_client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=full_prompt
-    )
-    return response.text.strip()
-
-# For Claude, pass the system prompt directly via the 'system' parameter.
-async def handle_claude_command_slash(prompt: str, claude_client, user_data, request_limit, user_id: str):
-    response = claude_client.messages.create(
-        model="claude-3-5-haiku-20241022",
-        max_tokens=1000,
-        temperature=1,
-        system=CLAUDE_SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt}
-                ]
-            }
-        ]
-    )
-    content = response.content
-    if isinstance(content, list):
-        # Convert each item: use its 'text' attribute if available
-        content = "".join(item.text if hasattr(item, "text") else str(item) for item in content)
-    return content.strip()
-
-async def handle_make_command_slash(prompt: str, openai_client):
-    response = openai_client.images.generate(
-        model="dall-e-3",
-        prompt=prompt,
-        size="1024x1024",
-        n=1
-    )
-    image_url = response.data[0].url
-    return image_url
-
-async def handle_prompt_command(interaction, prompt, handler, client, description, google_client):
-    """
-    Handles the common logic for prompt-based commands.
-    Calls the provided handler to generate a response, then routes it.
-    """
-    logger.info(f"Handling {description} for user {interaction.user} with prompt: {prompt}")
-    uid = str(interaction.user.id)
-    
-    # Retrieve the user state
-    user_state = bot_state.get_user_state(uid)
-    
-    # Add the user's prompt to the conversation history
-    user_state.add_prompt("user", prompt)
-    
-    # Get the conversation context
-    context = user_state.get_context()
-    logger.debug(f"Conversation context for user {interaction.user}: {context}")
-    
-    # Defer response immediately.
-    await interaction.response.defer()
-    try:
-        # Pass the conversation context to the handler
-        result = await handler(context, client, user_state.request_data, REQUEST_LIMIT, uid)
-        
-        # Add the bot's response to the conversation history
-        user_state.add_prompt("assistant", result)
-        
-        logger.info(f"Generated response for {description}: {result}")
-        await route_response(interaction, prompt, result, google_client)
-    except Exception as e:
-        logger.error(f"Error in {description} for user {interaction.user}: {e}", exc_info=True)
-        await interaction.followup.send("An error occurred while processing your request. Please try again later.")
-
-async def summarize_response(response: str, google_client) -> str:
-    """Summarize the response to be under the DEFAULT_SUMMARY_LIMIT using Google GenAI."""
-    logger.info("Summarizing response using Google GenAI")
-    from config import DEFAULT_SUMMARY_LIMIT  # Import locally to avoid circular dependencies
-    try:
-        summary_prompt = f"Summarize the following text to less than {DEFAULT_SUMMARY_LIMIT} characters:\n\n{response}"
-        summary = await handle_google_command_slash(summary_prompt, google_client, {}, 0, "summary")
-        logger.info(f"Generated summary: {summary}")
-        return summary.strip()
-    except Exception as e:
-        logger.error(f"Error summarizing response: {e}", exc_info=True)
-        return "Error summarizing response."
-
-
-async def route_response(interaction, prompt: str, full_response: str, google_client):
-    """
-    Routes the response based on length and channel:
-      - If full_response is longer than DEFAULT_SUMMARY_LIMIT and the command wasn't used in the summary channel:
-         1. Generate a summary and send it to the user.
-         2. Post the full response to the summary channel.
-      - Otherwise, send the full response (chunked if necessary) to the user.
-    """
-    # First, compose the text version (question + answer) if desired.
-    combined = compose_text_response(prompt, full_response)
-    
-    # Check if we need to summarize.
-    if len(combined) > DEFAULT_SUMMARY_LIMIT and int(interaction.channel_id) != int(SUMMARY_CHANNEL_ID):
-        logger.info("Response exceeds summary limit; generating summary.")
-        summary = await summarize_response(combined, google_client)
-        summary_response = compose_text_response(prompt, summary)
-        await interaction.followup.send(summary_response)
-        
-        # Now, post the full response in the summary channel.
-        if interaction.guild is None:
-            logger.warning("Interaction is not associated with a guild. Skipping summary channel posting.")
-            return  # Skip posting to the summary channel if no guild is associated.
-        
+        await interaction.response.defer()
         try:
-            # Fetch the summary channel using interaction.guild
-            summary_channel = interaction.guild.get_channel(SUMMARY_CHANNEL_ID)
-            if summary_channel is None:
-                logger.error(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found in the guild.")
-                raise ValueError(f"Summary channel with ID {SUMMARY_CHANNEL_ID} not found.")
-            
-            # Log the bot's permissions for the summary channel
-            permissions = summary_channel.permissions_for(interaction.guild.me)
-            if not permissions.view_channel or not permissions.send_messages:
-                logger.error(f"Bot lacks permissions for summary channel (ID: {SUMMARY_CHANNEL_ID}).")
-                raise discord.errors.Forbidden(None, "Missing permissions for summary channel.")
-            
-            logger.info(f"Posting full response to summary channel (ID: {SUMMARY_CHANNEL_ID}).")
-            # If the full response is too long for a single message, split it.
-            full_chunks = split_message(combined)
-            for chunk in full_chunks:
-                await summary_channel.send(chunk)
+            result = await self.generate_response(context, client, system_prompt)
+            user_state.add_prompt("assistant", result)
+            self.logger.info(f"Generated response for {description}: {result}")
+            await interaction.followup.send(result)
         except Exception as e:
-            logger.error(f"Failed to send message to summary channel: {e}", exc_info=True)
-            # Fallback: send full response as follow-up messages.
-            for chunk in split_message(combined):
-                await interaction.followup.send(chunk)
-    else:
-        # Otherwise, just send the full response.
-        if len(combined) > 2000:
-            for chunk in split_message(combined):
-                await interaction.followup.send(chunk)
-        else:
-            await interaction.followup.send(combined)
+            self.logger.error(f"Error in {description} for user {interaction.user}: {e}", exc_info=True)
+            await interaction.followup.send("An error occurred while processing your request. Please try again later.")
+
+    async def generate_response(self, context, client, system_prompt):
+        """Generate a response using the provided client and system prompt."""
+        messages = [{"role": "system", "content": system_prompt}] + context
+        response = client.chat.completions.create(model="gpt-4o-mini", messages=messages)
+        return response.choices[0].message.content.strip()
+
+
+class AskCommandGroup(CommandGroup):
+    """Command group for /ask commands."""
+    def __init__(self, bot_state: BotState, logger: logging.Logger, openai_client, google_client, claude_client):
+        super().__init__(name="ask", description="Ask various AI models", bot_state=bot_state, logger=logger)
+        self.openai_client = openai_client
+        self.google_client = google_client
+        self.claude_client = claude_client
+
+        @self.command(name="gpt", description="Ask GPT-4o-mini a question")
+        async def ask_gpt(interaction: discord.Interaction, question: str):
+            await self.handle_prompt_command(
+                interaction, question, self.openai_client, "GPT-4o-mini", GPT_SYSTEM_PROMPT
+            )
+
+        @self.command(name="google", description="Ask Google GenAI a question")
+        async def ask_google(interaction: discord.Interaction, question: str):
+            await self.handle_prompt_command(
+                interaction, question, self.google_client, "Google GenAI", GOOGLE_SYSTEM_PROMPT
+            )
+
+        @self.command(name="claude", description="Ask Claude (as a poet) a question")
+        async def ask_claude(interaction: discord.Interaction, question: str):
+            await self.handle_prompt_command(
+                interaction, question, self.claude_client, "Claude", CLAUDE_SYSTEM_PROMPT
+            )
+
+
+class CommandHandler:
+    """Main command handler for registering commands."""
+    def __init__(self, bot_state: BotState, tree):
+        self.logger = logging.getLogger('discord_bot')
+        self.bot_state = bot_state
+        self.tree = tree
+
+    def register_commands(self, openai_client, google_client, claude_client):
+        # Register the /ask command group
+        ask_group = AskCommandGroup(self.bot_state, self.logger, openai_client, google_client, claude_client)
+        self.tree.add_command(ask_group)
+
+        # Register the /clear_history command
+        @self.tree.command(name="clear_history", description="Clear your conversation history")
+        async def clear_history(interaction: discord.Interaction):
+            self.logger.info(f"User {interaction.user} invoked /clear_history")
+            uid = str(interaction.user.id)
+            user_state = self.bot_state.get_user_state(uid)
+            user_state.clear_history()
+            self.logger.info(f"Cleared history for user {interaction.user}")
+            await interaction.response.send_message("Your conversation history has been cleared.")

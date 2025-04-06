@@ -6,7 +6,7 @@ def setup_logger():
     logger = logging.getLogger('discord_bot')
     logger.setLevel(logging.DEBUG)
 
-    file_handler = RotatingFileHandler('bot_log.log', maxBytes=1 * 1024 * 1024 * 1024, backupCount=5)
+    file_handler = RotatingFileHandler('bot_log.log', maxBytes=10 * 1024 * 1024, backupCount=5)
     console_handler = logging.StreamHandler()
 
     class CustomFormatter(logging.Formatter):

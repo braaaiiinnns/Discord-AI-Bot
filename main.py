@@ -12,11 +12,12 @@ class DiscordBot:
         self.logger = setup_logger()  # Ensure logger is initialized using setup_logger
         
         # Configure intents
-        # self.intents = discord.Intents.all()
-        self.intents.messages = True  # Enable message-related events
-        self.intents.guilds = True    # Enable guild-related events
-        self.intents.message_content = True  # Enable access to message content (required for some commands)
-        self.intents.members = True   # Enable member-related events (if needed)
+        self.intents = discord.Intents.all()  # Enable all intents
+        # Alternatively, uncomment the following lines to customize intents:
+        # self.intents.messages = True  # Enable message-related events
+        # self.intents.guilds = True    # Enable guild-related events
+        # self.intents.message_content = True  # Enable access to message content (required for some commands)
+        # self.intents.members = True   # Enable member-related events (if needed)
 
         self.client = discord.AutoShardedClient(intents=self.intents)
         self.tree = app_commands.CommandTree(self.client)
@@ -47,7 +48,8 @@ class DiscordBot:
 
             # Ensure the bot's cache is fully populated
             if not self.client.guilds:
-                self.logger.warning("No guilds found. Ensure the bot is invited to a server.")
+                self.logger.warning("No guilds found. Fetching guilds...")
+                await self.client.fetch_guilds()  # Fetch guilds if cache is empty
             else:
                 # Update the list of connected guilds
                 self.bot_state.guilds = self.client.guilds

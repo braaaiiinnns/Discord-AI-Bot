@@ -4,3 +4,4 @@ python-dotenv
 colorama
 google-genai
 anthropic
+cryptography

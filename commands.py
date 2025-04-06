@@ -1,7 +1,7 @@
 import discord
 import logging
 from discord import app_commands
-from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, SUMMARY_CHANNEL_ID
+from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, RESPONSE_CHANNEL_ID
 from state import BotState
 from utilities import route_response
 
@@ -48,14 +48,14 @@ class CommandGroup(app_commands.Group):  # Ensure proper inheritance from app_co
             result = await self.generate_response(context, client, system_prompt)
             user_state.add_prompt("assistant", result)
 
-            # Summarize the response if it exceeds the DEFAULT_SUMMARY_LIMIT
+            # Determine if summarization is needed
             summary = None
             if len(result) > DEFAULT_SUMMARY_LIMIT:
                 self.logger.info(f"Response exceeds {DEFAULT_SUMMARY_LIMIT} characters. Summarizing...")
                 summary = await self.summarize_response(result, client)
 
             # Route the response using the helper function
-            await route_response(interaction, prompt, result, summary, SUMMARY_CHANNEL_ID, self.logger)
+            await route_response(interaction, prompt, result, summary, RESPONSE_CHANNEL_ID, self.logger)
         except Exception as e:
             self.logger.error(f"Error in {description} for user {interaction.user}: {e}", exc_info=True)
             await interaction.followup.send("An error occurred while processing your request. Please try again later.")

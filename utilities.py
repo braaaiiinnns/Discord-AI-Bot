@@ -110,31 +110,43 @@ async def route_response(
     interaction: discord.Interaction,
     prompt: str,
     result: str,
-    summary: summary_type_hint,  # Dynamically use the appropriate type hint
-    summary_channel_id: int,
+    summary: str | None,  # Dynamically use the appropriate type hint
+    response_channel_id: int,
     logger: logging.Logger
 ):
     """
-    Route the response to the user and optionally to the summary channel.
+    Route the response to the user and optionally to the response channel.
 
     Args:
         interaction (discord.Interaction): The interaction object.
         prompt (str): The user's prompt.
         result (str): The full response.
         summary (str | None or Optional[str]): The summarized response, if applicable.
-        summary_channel_id (int): The ID of the summary channel.
+        response_channel_id (int): The ID of the response channel.
         logger (logging.Logger): The logger instance.
     """
-    if summary:
+    try:
+        # If the response is within the summary limit, send it directly to the user
+        if not summary:
+            logger.info("Response is within the summary limit. Sending directly to the user.")
+            chunks = split_message(f"**Prompt:** {prompt}\n**Full Response:** {result}", limit=2000)
+            for chunk in chunks:
+                await interaction.followup.send(chunk)
+            return
+
+        # If a summary exists, send the summary to the user
         await interaction.followup.send(f"**Prompt:** {prompt}\n**Summary:** {summary}")
 
-    summary_channel = interaction.client.get_channel(summary_channel_id)
-    if summary_channel:
-        logger.info(f"Summary channel found: {summary_channel.name} (ID: {summary_channel.id})")
-        chunks = split_message(f"**Prompt:** {prompt}\n**Full Response:** {result}", limit=2000)
-        for chunk in chunks:
-            await summary_channel.send(chunk)
-        logger.info("Full response sent to summary channel.")
-    else:
-        logger.error(f"Summary channel with ID {summary_channel_id} not found.")
-        await interaction.followup.send("The summary channel is not available.")
+        # Send the full response to the response channel
+        response_channel = interaction.client.get_channel(response_channel_id)
+        if response_channel:
+            logger.info(f"Response channel found: {response_channel.name} (ID: {response_channel.id})")
+            chunks = split_message(f"**Prompt:** {prompt}\n**Full Response:** {result}", limit=2000)
+            for chunk in chunks:
+                await response_channel.send(chunk)
+            logger.info("Full response sent to response channel.")
+        else:
+            logger.error(f"Response channel with ID {response_channel_id} not found.")
+    except Exception as e:
+        logger.error(f"Error while routing response: {e}", exc_info=True)
+        await interaction.followup.send("An error occurred while routing the response.")

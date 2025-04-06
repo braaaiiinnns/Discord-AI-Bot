@@ -17,20 +17,20 @@ REQUEST_LIMIT = 24
 IMAGE_REQUEST_LIMIT = 12
 RESET_HOURS = 24
 
-# Channel and summary settings.
+# Channel and response settings.
 DEFAULT_SUMMARY_LIMIT = 250  # Character limit for summaries.
-SUMMARY_CHANNEL_ID = os.getenv('SUMMARY_CHANNEL_ID')  # Use channel ID instead of name
+RESPONSE_CHANNEL_ID = os.getenv('SUMMARY_CHANNEL_ID')  # Use channel ID instead of name
 
-# Validate SUMMARY_CHANNEL_ID
-if SUMMARY_CHANNEL_ID is None:
-    logger.error("SUMMARY_CHANNEL_ID environment variable is not set.")
-    raise ValueError("SUMMARY_CHANNEL_ID environment variable is not set.")
+# Validate RESPONSE_CHANNEL_ID
+if RESPONSE_CHANNEL_ID is None:
+    logger.error("RESPONSE_CHANNEL_ID environment variable is not set.")
+    raise ValueError("RESPONSE_CHANNEL_ID environment variable is not set.")
 try:
-    SUMMARY_CHANNEL_ID = int(SUMMARY_CHANNEL_ID)
-    logger.info(f"Loaded SUMMARY_CHANNEL_ID: {SUMMARY_CHANNEL_ID}")
+    RESPONSE_CHANNEL_ID = int(RESPONSE_CHANNEL_ID)
+    logger.info(f"Loaded RESPONSE_CHANNEL_ID: {RESPONSE_CHANNEL_ID}")
 except ValueError:
-    logger.error("SUMMARY_CHANNEL_ID must be a valid integer.")
-    raise ValueError("SUMMARY_CHANNEL_ID must be a valid integer.")
+    logger.error("RESPONSE_CHANNEL_ID must be a valid integer.")
+    raise ValueError("RESPONSE_CHANNEL_ID must be a valid integer.")
 
 # File names.
 REQUEST_COUNT_FILE = 'user_requests.json'

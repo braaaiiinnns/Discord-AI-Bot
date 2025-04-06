@@ -135,13 +135,13 @@ async def route_response(
             return
 
         # If a summary exists, send the summary to the user
-        await interaction.followup.send(f"**Prompt:** {prompt}\n**Summary:** {summary}")
+        await interaction.followup.send(f"✉️: {prompt}\n📫: {summary}")
 
         # Send the full response to the response channel
         response_channel = interaction.client.get_channel(response_channel_id)
         if response_channel:
             logger.info(f"Response channel found: {response_channel.name} (ID: {response_channel.id})")
-            chunks = split_message(f"**Prompt:** {prompt}\n**Full Response:** {result}", limit=2000)
+            chunks = split_message(f"✉️: {prompt}\n📫: {result}", limit=2000)
             for chunk in chunks:
                 await response_channel.send(chunk)
             logger.info("Full response sent to response channel.")

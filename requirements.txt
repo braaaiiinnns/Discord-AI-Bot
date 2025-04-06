@@ -1,7 +1,7 @@
-discord.py==2.3.2
-openai
+cryptography
+discord.py
 python-dotenv
 colorama
 google-genai
 anthropic
-cryptography
+openai

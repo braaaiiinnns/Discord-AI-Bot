@@ -12,7 +12,7 @@ class DiscordBot:
         self.logger = setup_logger()  # Ensure logger is initialized using setup_logger
         
         # Configure intents
-        self.intents = discord.Intents.all()  # Enable all intents
+        self.intents = discord.Intents.all()  # Initialize intents
         # Alternatively, uncomment the following lines to customize intents:
         # self.intents.messages = True  # Enable message-related events
         # self.intents.guilds = True    # Enable guild-related events

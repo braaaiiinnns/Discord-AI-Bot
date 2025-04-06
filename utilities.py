@@ -4,13 +4,17 @@ from datetime import datetime, timedelta
 from config import REQUEST_COUNT_FILE, RESET_HOURS
 import logging
 
-logger = logging.getLogger('discord_bot')
+logger = logging.getLogger('discord_bot')  # Ensure consistent logger name
 
 def load_user_request_data():
-    logger.info("Loading user request data")
+    logger.info("Loading user request data")  # Use consistent logger
     if os.path.exists(REQUEST_COUNT_FILE):
-        with open(REQUEST_COUNT_FILE, 'r') as file:
-            return json.load(file)
+        try:
+            with open(REQUEST_COUNT_FILE, 'r') as file:
+                return json.load(file)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode JSON: {e}")
+            return {}
     else:
         logger.warning("Request count file not found. Creating a new one.")
         data = {}
@@ -19,13 +23,12 @@ def load_user_request_data():
         return data
 
 def save_user_request_data(data):
-    logger.info("Saving user request data")
+    logger.info("Saving user request data")  # Use consistent logger
     with open(REQUEST_COUNT_FILE, 'w') as file:
         json.dump(data, file)
 
 def check_and_reset_user_count(user_id, user_data):
-    logger.info(f"Checking and resetting request count for user {user_id}")
-    from datetime import datetime, timedelta
+    logger.info(f"Checking and resetting request count for user {user_id}")  # Use consistent logger
     now = datetime.now()
     if user_id not in user_data:
         logger.info(f"Initializing request data for new user {user_id}")

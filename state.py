@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('discord_bot')  # Updated logger name for consistency
 
 class UserState:
     """Stores the prompt history, context, and request data for a single user."""
@@ -25,7 +25,7 @@ class UserState:
 
     def clear_history(self):
         """Clear the prompt history and request data."""
-        logger.info("Clearing history for user.")
+        logger.info("Clearing history for user.")  # Use consistent logger
         self.prompt_history.clear()  # Explicitly clear the list
         self.request_data.clear()  # Explicitly clear the dictionary
         if self.clear_task:
@@ -57,8 +57,13 @@ class BotState:
     def __init__(self, timeout: int = 3600):
         self.user_states = {}
         self.timeout = timeout
+        self.guilds = []  # Initialize as an empty list
 
     def get_user_state(self, user_id: str) -> UserState:
         if user_id not in self.user_states:
             self.user_states[user_id] = UserState(timeout=self.timeout)
         return self.user_states[user_id]
+    
+    def get_guilds(self):
+        """Return the list of guilds."""
+        return self.guilds

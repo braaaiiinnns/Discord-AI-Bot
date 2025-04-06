@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 import logging
 
-logger = logging.getLogger('discord_bot')
+logger = logging.getLogger('discord_bot')  # Ensure consistent logger name
 
 load_dotenv()
 
@@ -19,7 +19,7 @@ RESET_HOURS = 24
 
 # Channel and summary settings.
 DEFAULT_SUMMARY_LIMIT = 250  # Character limit for summaries.
-SUMMARY_CHANNEL_ID = os.getenv('SUMMARY_CHANNEL_ID')
+SUMMARY_CHANNEL_ID = os.getenv('SUMMARY_CHANNEL_ID')  # Use channel ID instead of name
 
 # Validate SUMMARY_CHANNEL_ID
 if SUMMARY_CHANNEL_ID is None:

@@ -34,6 +34,31 @@ class CommandGroup(app_commands.Group):  # Ensure proper inheritance from app_co
             interaction, question, self.claude_client, "Claude", CLAUDE_SYSTEM_PROMPT
         )
 
+    @app_commands.command(name="make", description="Generate an image using DALL-E 3")
+    async def make_image(self, interaction: discord.Interaction, prompt: str):
+        """
+        Generate an image using DALL-E 3 based on the provided prompt.
+        """
+        self.logger.info(f"User {interaction.user} invoked /make with prompt: {prompt}")
+        await interaction.response.defer()
+
+        try:
+            # Generate the image using OpenAI's DALL-E 3
+            self.logger.info("Generating image using DALL-E 3...")
+            response = self.openai_client.images.generate(
+                prompt=prompt,
+                n=1,  # Generate one image
+                size="1024x1024"  # Specify the image size
+            )
+            image_url = response['data'][0]['url']
+            self.logger.info(f"Image generated successfully: {image_url}")
+
+            # Send the image URL to the user
+            await interaction.followup.send(f"Here is your generated image:\n{image_url}")
+        except Exception as e:
+            self.logger.error(f"Error generating image: {e}", exc_info=True)
+            await interaction.followup.send("An error occurred while generating the image. Please try again later.")
+
     async def handle_prompt_command(self, interaction: discord.Interaction, prompt: str, client, description: str, system_prompt: str):
         """Handle a prompt-based command."""
         self.logger.info(f"Handling {description} for user {interaction.user} with prompt: {prompt}")
@@ -151,5 +176,28 @@ class CommandHandler:
                 user_state.clear_history()
                 self.logger.info(f"Cleared history for user {interaction.user}")
                 await interaction.response.send_message("Your conversation history has been cleared.")
+
+            # Register the /make command
+            @self.tree.command(name="make", description="Generate an image using DALL-E 3")
+            async def make_image(interaction: discord.Interaction, prompt: str):
+                self.logger.info(f"User {interaction.user} invoked /make with prompt: {prompt}")
+                await interaction.response.defer()
+
+                try:
+                    # Generate the image using OpenAI's DALL-E 3
+                    self.logger.info("Generating image using DALL-E 3...")
+                    response = openai_client.images.generate(
+                        prompt=prompt,
+                        n=1,  # Generate one image
+                        size="1024x1024"  # Specify the image size
+                    )
+                    image_url = response['data'][0]['url']
+                    self.logger.info(f"Image generated successfully: {image_url}")
+
+                    # Send the image URL to the user
+                    await interaction.followup.send(f"Here is your generated image:\n{image_url}")
+                except Exception as e:
+                    self.logger.error(f"Error generating image: {e}", exc_info=True)
+                    await interaction.followup.send("An error occurred while generating the image. Please try again later.")
         except Exception as e:
             self.logger.error(f"Failed to register commands: {e}", exc_info=True)

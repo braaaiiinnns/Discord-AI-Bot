@@ -4,7 +4,7 @@ import discord
 from datetime import datetime, timedelta
 from config import REQUEST_COUNT_FILE, RESET_HOURS
 import logging
-#from crypt import derive_key, encrypt_data, decrypt_data  # Import cryptography methods if needed
+#from ncrypt import derive_key, encrypt_data, decrypt_data  # Import cryptography methods if needed
 from typing import Optional  # Import Optional for older Python versions
 
 logger = logging.getLogger('discord_bot')  # Ensure consistent logger name

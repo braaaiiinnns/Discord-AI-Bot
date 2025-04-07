@@ -87,10 +87,6 @@ async def check_request_limit(message, user_data, request_limit):
     save_user_request_data(user_data)
     return True
 
-def compose_text_response(prompt: str, answer: str) -> str:
-    """Compose a text response that shows both the prompt and reply."""
-    return f"**Prompt:** {prompt}\n**Answer:** {answer}"
-
 def split_message(content: str, limit: int = 2000) -> list[str]:
     """
     Split content into chunks of up to `limit` characters.

@@ -4,8 +4,7 @@ import discord
 from datetime import datetime, timedelta
 from config import REQUEST_COUNT_FILE, RESET_HOURS
 import logging
-#from ncrypt import derive_key, encrypt_data, decrypt_data  # Import cryptography methods if needed
-from typing import Optional  # Import Optional for older Python versions
+from typing import Optional  # Import Optional for type hinting
 
 logger = logging.getLogger('discord_bot')  # Ensure consistent logger name
 
@@ -106,8 +105,8 @@ async def route_response(
     interaction: discord.Interaction,
     prompt: str,
     result: str,
-    summary: str | None,  # Dynamically use the appropriate type hint
-    response_channel_id: int,
+    summary: Optional[str],  # Use Optional instead of `str | None`
+    response_channels: dict,  # Cached dictionary of response channels by guild ID
     logger: logging.Logger
 ):
     """
@@ -117,32 +116,49 @@ async def route_response(
         interaction (discord.Interaction): The interaction object.
         prompt (str): The user's prompt.
         result (str): The full response.
-        summary (str | None or Optional[str]): The summarized response, if applicable.
-        response_channel_id (int): The ID of the response channel.
+        summary (Optional[str]): The summarized response, if applicable.
+        response_channels (dict): Cached dictionary of response channels by guild ID.
         logger (logging.Logger): The logger instance.
     """
     try:
+        # Validate that response_channels is a dictionary
+        if not isinstance(response_channels, dict):
+            logger.error("Invalid response_channels parameter. Expected a dictionary.")
+            await interaction.followup.send("An internal error occurred while routing the response.")
+            return
+
+        guild = interaction.guild
+        if not guild:
+            logger.warning("Interaction does not belong to a guild. Returning full response to the user.")
+            chunks = split_message(f"**Prompt:** {prompt}\n**Full Response:** {result}", limit=2000)
+            for chunk in chunks:
+                await interaction.followup.send(chunk)
+            return
+
+        # Resolve the response channel from the cached dictionary
+        response_channel = response_channels.get(guild.id)
+        if not response_channel:
+            logger.error(f"No cached response channel found for guild '{guild.name}'.")
+            await interaction.followup.send("The response channel could not be found.")
+            return
+
         # If the response is within the summary limit, send it directly to the user
         if not summary:
             logger.info("Response is within the summary limit. Sending directly to the user.")
             chunks = split_message(f"**Prompt:** {prompt}\n**Full Response:** {result}", limit=2000)
             for chunk in chunks:
                 await interaction.followup.send(chunk)
-            return
+            return  # Skip sending to the response channel
 
         # If a summary exists, send the summary to the user
         await interaction.followup.send(f"✉️: {prompt}\n📫: {summary}")
 
         # Send the full response to the response channel
-        response_channel = interaction.client.get_channel(response_channel_id)
-        if response_channel:
-            logger.info(f"Response channel found: {response_channel.name} (ID: {response_channel.id})")
-            chunks = split_message(f"✉️: {prompt}\n📫: {result}", limit=2000)
-            for chunk in chunks:
-                await response_channel.send(chunk)
-            logger.info("Full response sent to response channel.")
-        else:
-            logger.error(f"Response channel with ID {response_channel_id} not found.")
+        logger.info(f"Sending full response to channel: {response_channel.name} (ID: {response_channel.id})")
+        chunks = split_message(f"✉️: {prompt}\n📫: {result}", limit=2000)
+        for chunk in chunks:
+            await response_channel.send(chunk)
+        logger.info("Full response sent to response channel.")
     except Exception as e:
         logger.error(f"Error while routing response: {e}", exc_info=True)
         await interaction.followup.send("An error occurred while routing the response.")

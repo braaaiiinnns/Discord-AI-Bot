@@ -4,10 +4,11 @@ from discord import app_commands
 from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, RESPONSE_CHANNEL_ID
 from state import BotState
 from utilities import route_response
+from ai_clients import OpenAIStrategy, GoogleGenAIStrategy, ClaudeStrategy
 
 class CommandGroup(app_commands.Group):  # Ensure proper inheritance from app_commands.Group
     """Command group for /ask commands."""
-    def __init__(self, bot_state: BotState, logger: logging.Logger, client: discord.Client, openai_client, google_client, claude_client):
+    def __init__(self, bot_state: BotState, logger: logging.Logger, client: discord.Client, openai_client, google_client, claude_client, response_channels: dict):
         super().__init__(name="ask", description="Ask various AI models")  # Ensure correct initialization
         self.bot_state = bot_state
         self.logger = logger
@@ -15,6 +16,7 @@ class CommandGroup(app_commands.Group):  # Ensure proper inheritance from app_co
         self.openai_client = openai_client
         self.google_client = google_client
         self.claude_client = claude_client
+        self.response_channels = response_channels  # Store response channels
 
     @app_commands.command(name="gpt", description="Ask GPT-4o-mini a question")
     async def ask_gpt(self, interaction: discord.Interaction, question: str):
@@ -45,89 +47,54 @@ class CommandGroup(app_commands.Group):  # Ensure proper inheritance from app_co
         await interaction.response.defer()
         try:
             self.logger.info(f"Generating response for {description}...")
-            result = await self.generate_response(context, client, system_prompt)
+
+            # Select the appropriate strategy
+            if description == "GPT-4o-mini":
+                strategy = OpenAIStrategy(client, self.logger)  # Pass the logger to the base class
+            elif description == "Google GenAI":
+                strategy = GoogleGenAIStrategy(client, self.logger)  # Pass the logger to the base class
+            elif description == "Claude":
+                strategy = ClaudeStrategy(client, self.logger)  # Pass the logger to the base class
+            else:
+                raise ValueError(f"Unsupported AI model: {description}")
+
+            # Generate the response using the strategy
+            result = await strategy.generate_response(context, system_prompt)  # Await the coroutine
+
             user_state.add_prompt("assistant", result)
 
             # Determine if summarization is needed
             summary = None
             if len(result) > DEFAULT_SUMMARY_LIMIT:
                 self.logger.info(f"Response exceeds {DEFAULT_SUMMARY_LIMIT} characters. Summarizing...")
-                summary = await self.summarize_response(result, client)
+                summary = await self.summarize_response(result)
 
             # Route the response using the helper function
-            await route_response(interaction, prompt, result, summary, RESPONSE_CHANNEL_ID, self.logger)
+            await route_response(interaction, prompt, result, summary, self.response_channels, self.logger)  # Use self.response_channels
         except Exception as e:
             self.logger.error(f"Error in {description} for user {interaction.user}: {e}", exc_info=True)
             await interaction.followup.send("An error occurred while processing your request. Please try again later.")
 
-    async def summarize_response(self, response: str, client) -> str:
-        """Summarize the response to be under the DEFAULT_SUMMARY_LIMIT."""
+    async def summarize_response(self, response: str) -> str:
+        """Summarize the response to be under the DEFAULT_SUMMARY_LIMIT using GoogleGenAIStrategy."""
         self.logger.info("Summarizing response...")
         summary_prompt = f"Summarize the following text to less than {DEFAULT_SUMMARY_LIMIT} characters:\n\n{response}"
         try:
-            if hasattr(client, "models"):
-                summary_response = client.models.generate_content(
-                    model="gemini-2.0-flash", contents=summary_prompt
-                )
-                return summary_response.text.strip()
-            else:
-                self.logger.error("Summarization is only supported for Google GenAI.")
-                raise AttributeError("Summarization is only supported for Google GenAI.")
+            # Always use GoogleGenAIStrategy for summarization
+            google_strategy = GoogleGenAIStrategy(self.google_client, self.logger)
+            return await google_strategy.generate_response([{"role": "user", "content": summary_prompt}], GOOGLE_SYSTEM_PROMPT)
         except Exception as e:
             self.logger.error(f"Error during summarization: {e}", exc_info=True)
-            raise
-
-    async def generate_response(self, context, client, system_prompt: str) -> str:
-        """Generate a response using the provided client and system prompt."""
-        self.logger.info("Generating response...")
-        messages = [{"role": "system", "content": system_prompt}] + context
-
-        try:
-            # Handle OpenAI client
-            if hasattr(client, "chat"):
-                self.logger.info("Using OpenAI client for response generation.")
-                response = client.chat.completions.create(model="gpt-4o-mini", messages=messages)
-                return response.choices[0].message.content.strip()
-
-            # Handle Google GenAI client
-            elif hasattr(client, "models"):
-                self.logger.info("Using Google GenAI client for response generation.")
-                full_prompt = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
-                response = client.models.generate_content(
-                    model="gemini-2.0-flash", contents=full_prompt
-                )
-                return response.text.strip()
-
-            # Handle Claude client
-            elif hasattr(client, "messages"):
-                self.logger.info("Using Claude client for response generation.")
-                response = client.messages.create(
-                    model="claude-3-5-haiku-20241022",
-                    max_tokens=1000,
-                    temperature=1,
-                    system=system_prompt,
-                    messages=[{"type": "text", "text": msg["content"]} for msg in messages],
-                )
-                content = response.content
-                if isinstance(content, list):
-                    return "".join(item.text if hasattr(item, "text") else str(item) for item in content).strip()
-                return content.strip()
-
-            # Raise an error if the client is unsupported
-            else:
-                self.logger.error(f"Unsupported client type: {type(client).__name__}")
-                raise AttributeError(f"Unsupported client type: {type(client).__name__}")
-        except Exception as e:
-            self.logger.error(f"Error during response generation: {e}", exc_info=True)
             raise
 
 
 class CommandHandler:
     """Main command handler for registering commands."""
-    def __init__(self, bot_state: BotState, tree: discord.app_commands.CommandTree):
-        self.logger = logging.getLogger('discord_bot')  # Ensure consistent logger name
+    def __init__(self, bot_state: BotState, tree: discord.app_commands.CommandTree, response_channels: dict, logger: logging.Logger):
+        self.logger = logger  # Ensure consistent logger name
         self.bot_state = bot_state
         self.tree = tree
+        self.response_channels = response_channels  # Cache response channels
 
     def register_commands(self, client: discord.Client, openai_client, google_client, claude_client):
         try:
@@ -138,7 +105,8 @@ class CommandHandler:
                 client=client,  # Pass the client object
                 openai_client=openai_client,
                 google_client=google_client,
-                claude_client=claude_client
+                claude_client=claude_client,
+                response_channels=self.response_channels  # Pass the response channels
             ))
             self.logger.info("Registered /ask command group.")
 

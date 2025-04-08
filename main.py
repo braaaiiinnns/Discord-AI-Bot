@@ -1,6 +1,7 @@
 import discord
 import logging  # Ensure logging is imported
 from discord import app_commands
+from discord.utils import get  # Import utility for searching channels
 from config import DISCORD_BOT_TOKEN, OPENAI_API_KEY, GOOGLE_GENAI_API_KEY, CLAUDE_API_KEY
 from logger_config import setup_logger
 from clients import get_openai_client, get_google_genai_client, get_claude_client
@@ -22,7 +23,10 @@ class DiscordBot:
         self.client = discord.AutoShardedClient(intents=self.intents)
         self.tree = app_commands.CommandTree(self.client)
         self.bot_state = BotState(timeout=3600)
-        self.command_handler = CommandHandler(self.bot_state, self.tree)
+        self.response_channels = {}  # Cache response channels by guild ID
+
+        # Pass response_channels to CommandHandler
+        self.command_handler = CommandHandler(self.bot_state, self.tree, self.response_channels, self.logger)
 
         # Initialize API clients
         self.openai_client = get_openai_client(OPENAI_API_KEY)
@@ -31,7 +35,7 @@ class DiscordBot:
 
         # Register commands
         self.command_handler.register_commands(
-            self.openai_client, self.google_client, self.claude_client
+            self.client, self.openai_client, self.google_client, self.claude_client
         )
 
     def run(self):
@@ -46,40 +50,49 @@ class DiscordBot:
             except Exception as e:
                 self.logger.error(f"Failed to sync commands: {e}", exc_info=True)
 
-            # Ensure the bot's cache is fully populated
-            if not self.client.guilds:
-                self.logger.warning("No guilds found. Fetching guilds...")
-                await self.client.fetch_guilds()  # Fetch guilds if cache is empty
-            else:
-                # Update the list of connected guilds
-                self.bot_state.guilds = self.client.guilds
-                self.logger.info("Connected guilds:")
-                for guild in self.client.guilds:
-                    self.logger.info(f"- {guild.name} (ID: {guild.id})")
-
+            # Log registered commands after syncing
             self.logger.info("Registered commands:")
             for command in self.tree.get_commands():
                 self.logger.info(f"- {command.name}")
+
+            # Search for or create the "🤖" channel in all guilds
+            for guild in self.client.guilds:
+                response_channel = discord.utils.get(guild.text_channels, name="🤖")
+                if response_channel:
+                    self.logger.info(f"Response channel found: {response_channel.name} (ID: {response_channel.id}) in guild {guild.name}")
+                else:
+                    try:
+                        response_channel = await guild.create_text_channel("🤖")
+                        self.logger.info(f"Created response channel: {response_channel.name} (ID: {response_channel.id}) in guild {guild.name}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to create response channel in guild {guild.name}: {e}", exc_info=True)
+
+                # Cache the response channel for the guild
+                self.response_channels[guild.id] = response_channel
+
+                self.logger.info(f"Response channel cached for guild '{guild.name}': {response_channel.name} (ID: {response_channel.id})")
 
         # Run the bot
         self.client.run(DISCORD_BOT_TOKEN)
 
 class CommandHandler:
     """Main command handler for registering commands."""
-    def __init__(self, bot_state: BotState, tree: discord.app_commands.CommandTree):
-        self.logger = logging.getLogger('discord_bot')  # Ensure consistent logger name
+    def __init__(self, bot_state: BotState, tree: discord.app_commands.CommandTree, response_channels: dict, logger: logging.Logger):
+        self.logger = logger  # Use the logger passed from DiscordBot
         self.bot_state = bot_state
         self.tree = tree
+        self.response_channels = response_channels  # Store response_channels
 
-    def register_commands(self, openai_client, google_client, claude_client):
+    def register_commands(self, client: discord.Client, openai_client, google_client, claude_client):
         # Register the /ask command group
         self.tree.add_command(CommandGroup(
             bot_state=self.bot_state,
             logger=self.logger,
-            client=self.tree.client,  # Pass the client object
+            client=client,  # Pass the client object
             openai_client=openai_client,
             google_client=google_client,
-            claude_client=claude_client
+            claude_client=claude_client,
+            response_channels=self.response_channels  # Pass the response channels
         ))
         self.logger.info("Registered /ask command group.")
 

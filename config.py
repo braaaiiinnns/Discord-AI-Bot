@@ -19,18 +19,7 @@ RESET_HOURS = 24
 
 # Channel and response settings.
 DEFAULT_SUMMARY_LIMIT = 250  # Character limit for summaries.
-RESPONSE_CHANNEL_ID = os.getenv('SUMMARY_CHANNEL_ID')  # Use channel ID instead of name
-
-# Validate RESPONSE_CHANNEL_ID
-if RESPONSE_CHANNEL_ID is None:
-    logger.error("RESPONSE_CHANNEL_ID environment variable is not set.")
-    raise ValueError("RESPONSE_CHANNEL_ID environment variable is not set.")
-try:
-    RESPONSE_CHANNEL_ID = int(RESPONSE_CHANNEL_ID)
-    logger.info(f"Loaded RESPONSE_CHANNEL_ID: {RESPONSE_CHANNEL_ID}")
-except ValueError:
-    logger.error("RESPONSE_CHANNEL_ID must be a valid integer.")
-    raise ValueError("RESPONSE_CHANNEL_ID must be a valid integer.")
+RESPONSE_CHANNEL_ID = os.getenv('RESPONSE_CHANNEL_ID')  
 
 # File names.
 REQUEST_COUNT_FILE = 'user_requests.json'

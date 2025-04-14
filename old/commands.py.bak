@@ -99,7 +99,8 @@ class CommandGroup(app_commands.Group):  # Ensure proper inheritance from app_co
 
 class CommandHandler:
     """Main command handler for registering commands."""
-    def __init__(self, bot_state: BotState, tree: discord.app_commands.CommandTree, response_channels: dict, logger: logging.Logger):
+    def __init__(self, bot_state: BotState, tree: discord.app_commands.CommandTree, 
+                 response_channels: dict, logger: logging.Logger):
         self.logger = logger  # Ensure consistent logger name
         self.bot_state = bot_state
         self.tree = tree

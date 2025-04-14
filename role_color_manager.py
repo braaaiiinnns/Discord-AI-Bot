@@ -5,7 +5,7 @@ import datetime
 import json
 import os
 import math
-from config import COLOR_CHANGE_ROLE_NAMES, COLOR_CHANGE_HOUR, COLOR_CHANGE_MINUTE
+from config import COLOR_CHANGE_ROLE_NAMES, COLOR_CHANGE_HOUR, COLOR_CHANGE_MINUTE, TIMEZONE
 from task_scheduler import TaskScheduler
 
 logger = logging.getLogger('discord_bot')
@@ -51,11 +51,12 @@ class RoleColorManager:
         self.color_change_task_id = self.scheduler.schedule_at_time(
             self.change_role_colors, 
             time=time, 
-            task_id="role_color_change"
+            task_id="role_color_change",
+            use_timezone=True  # Use the configured timezone
         )
         # Start the task
         self.scheduler.start_task(self.color_change_task_id)
-        logger.info(f"Role color change scheduled with task ID: {self.color_change_task_id}")
+        logger.info(f"Role color change scheduled with task ID: {self.color_change_task_id} at {time} {TIMEZONE}")
     
     def stop(self):
         """Stop the role color change task"""
@@ -305,3 +306,53 @@ class RoleColorManager:
             # Change for all guilds
             await self.change_role_colors()
             return True
+    
+    async def change_specific_role_color(self, guild_id, role_name):
+        """Change the color for a specific role in a guild"""
+        logger.info(f"Changing color for specific role '{role_name}' in guild ID {guild_id}")
+        
+        # Get the guild
+        guild = self.client.get_guild(guild_id)
+        if not guild:
+            logger.error(f"Guild with ID {guild_id} not found")
+            return False, "Guild not found"
+        
+        # Find the specified role
+        role = discord.utils.get(guild.roles, name=role_name.strip())
+        if not role:
+            logger.warning(f"Role '{role_name}' not found in guild '{guild.name}'")
+            return False, f"Role '{role_name}' not found"
+        
+        try:
+            # Generate a distinct color for this role
+            color_key = f"{guild.id}_{role.id}"
+            rgb_color = self.generate_distinct_color(
+                guild.id,
+                role.id,
+                0,  # Single role, so index is 0
+                1   # Only changing one role
+            )
+            
+            # Store the color used
+            self.current_day_colors[color_key] = rgb_color
+            
+            # Convert to Discord color
+            discord_color = discord.Color.from_rgb(*rgb_color)
+            
+            # Update the role color
+            await role.edit(color=discord_color)
+            logger.info(f"Changed role '{role.name}' color to {rgb_color} in guild '{guild.name}'")
+            
+            # Store the new color as the previous color for next time
+            self.previous_colors[color_key] = rgb_color
+            self.save_previous_colors()
+            
+            return True, f"Changed role '{role_name}' color to RGB {rgb_color}"
+        except Exception as e:
+            error_msg = f"Error changing color for role '{role_name}': {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg
+            
+    def get_configured_role_names(self):
+        """Return the list of role names configured for color changes"""
+        return COLOR_CHANGE_ROLE_NAMES

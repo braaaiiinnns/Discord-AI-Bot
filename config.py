@@ -28,6 +28,21 @@ COLOR_CHANGE_ROLE_NAMES = os.getenv('COLOR_CHANGE_ROLE_NAMES', DEFAULT_COLOR_ROL
 COLOR_CHANGE_HOUR = int(os.getenv('COLOR_CHANGE_HOUR', '0'))  # Default hour is midnight (UTC)
 COLOR_CHANGE_MINUTE = int(os.getenv('COLOR_CHANGE_MINUTE', '0'))  # Default minute is 0
 
+# Timezone settings
+def get_system_timezone():
+    """Get the system's timezone, with fallback to UTC if any issues occur."""
+    try:
+        from tzlocal import get_localzone
+        system_tz = str(get_localzone())
+        logger.info(f"Using system timezone: {system_tz}")
+        return system_tz
+    except Exception as e:
+        logger.warning(f"Failed to get system timezone: {e}. Falling back to UTC.")
+        return "UTC"
+
+# Use system timezone by default, override with env var if set, fallback to UTC if all fails
+TIMEZONE = os.getenv('TIMEZONE', get_system_timezone())
+
 # File names.
 REQUEST_COUNT_FILE = 'user_requests.json'
 VECTOR_STORE_ID_FILE = 'vector_store_id.json'

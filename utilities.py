@@ -1,22 +1,17 @@
 import json
 import os
 import discord
-from datetime import datetime, timedelta
-from config import REQUEST_COUNT_FILE, RESET_HOURS
 import logging
-from typing import Optional  # Import Optional for type hinting
-from random_ascii_emoji import get_random_emoji  # Import the random emoji function
+from datetime import datetime, timedelta
+from typing import Optional
+from random_ascii_emoji import get_random_emoji
+from config import REQUEST_COUNT_FILE, RESET_HOURS
 
-logger = logging.getLogger('discord_bot')  # Ensure consistent logger name
+logger = logging.getLogger('discord_bot')
 
-# Check Python version to determine type hinting style
-try:
-    summary_type_hint = str | None  # Python 3.10+ syntax
-except TypeError:
-    from typing import Optional
-    summary_type_hint = Optional[str]  # Fallback for older Python versions
-
+# User request tracking functions
 def load_user_request_data():
+    """Load user request data from JSON file"""
     if os.path.exists(REQUEST_COUNT_FILE):
         try:
             with open(REQUEST_COUNT_FILE, 'r') as file:
@@ -31,10 +26,12 @@ def load_user_request_data():
         return data
 
 def save_user_request_data(data):
+    """Save user request data to JSON file"""
     with open(REQUEST_COUNT_FILE, 'w') as file:
         json.dump(data, file)
 
 def check_and_reset_user_count(user_id, user_data):
+    """Check user request count and reset if necessary"""
     now = datetime.now()
     if user_id not in user_data:
         user_data[user_id] = {
@@ -62,6 +59,7 @@ def check_and_reset_user_count(user_id, user_data):
     return user_data
 
 def time_until_reset(user_data, user_id, reset_type):
+    """Get time until request count reset"""
     last_reset = datetime.fromisoformat(user_data[user_id][reset_type])
     reset_time = last_reset + timedelta(hours=RESET_HOURS)
     time_remaining = reset_time - datetime.now()
@@ -69,17 +67,14 @@ def time_until_reset(user_data, user_id, reset_type):
     minutes = remainder // 60
     return f"{hours}h{minutes}m"
 
-async def check_request_limit(message, user_data, request_limit):
-    """
-    Checks if the user has exceeded their request limit.
-    If exceeded, sends a message with the wait time.
-    Otherwise, increments the count and returns True.
-    """
-    user_id = str(message.author.id)
+async def check_request_limit(interaction, user_data, request_limit):
+    """Check if user has exceeded their request limit"""
+    user_id = str(interaction.user.id)
     if user_data[user_id]['count'] >= request_limit:
         wait_time = time_until_reset(user_data, user_id, 'last_reset')
-        await message.channel.send(
-            f"Sorry, you've reached your request limit. Please wait {wait_time} before trying again."
+        await interaction.response.send_message(
+            f"Sorry, you've reached your request limit. Please wait {wait_time} before trying again.",
+            ephemeral=True
         )
         return False
     # Increment the user's count and persist the change
@@ -87,17 +82,9 @@ async def check_request_limit(message, user_data, request_limit):
     save_user_request_data(user_data)
     return True
 
-def split_message(content: str, limit: int = 2000) -> list[str]:
-    """
-    Split content into chunks of up to `limit` characters.
-
-    Args:
-        content (str): The content to split.
-        limit (int): The maximum length of each chunk.
-
-    Returns:
-        list[str]: A list of content chunks.
-    """
+# Response handling functions
+def split_message(content: str, limit: int = 2000) -> list:
+    """Split content into chunks of up to `limit` characters"""
     if len(content) <= limit:
         return [content]
     return [content[i:i + limit] for i in range(0, len(content), limit)]
@@ -106,21 +93,11 @@ async def route_response(
     interaction: discord.Interaction,
     prompt: str,
     result: str,
-    summary: Optional[str],  # Use Optional instead of `str | None`
-    response_channels: dict,  # Cached dictionary of response channels by guild ID
+    summary: Optional[str],
+    response_channels: dict,
     logger: logging.Logger
 ):
-    """
-    Route the response to the user and optionally to the response channel.
-
-    Args:
-        interaction (discord.Interaction): The interaction object.
-        prompt (str): The user's prompt.
-        result (str): The full response.
-        summary (Optional[str]): The summarized response, if applicable.
-        response_channels (dict): Cached dictionary of response channels by guild ID.
-        logger (logging.Logger): The logger instance.
-    """
+    """Route response to user and optionally to a dedicated channel"""
     try:
         # Validate that response_channels is a dictionary
         if not isinstance(response_channels, dict):

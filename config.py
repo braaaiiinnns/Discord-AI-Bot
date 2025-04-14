@@ -22,6 +22,12 @@ RESET_HOURS = 24
 DEFAULT_SUMMARY_LIMIT = 250  # Character limit for summaries.
 RESPONSE_CHANNEL_ID = os.getenv('RESPONSE_CHANNEL_ID')  
 
+# Role color change settings
+DEFAULT_COLOR_ROLES = "Rainbow,Colorful,Vibrant,Spectrum"  # Default list of roles
+COLOR_CHANGE_ROLE_NAMES = os.getenv('COLOR_CHANGE_ROLE_NAMES', DEFAULT_COLOR_ROLES).split(',')
+COLOR_CHANGE_HOUR = int(os.getenv('COLOR_CHANGE_HOUR', '0'))  # Default hour is midnight (UTC)
+COLOR_CHANGE_MINUTE = int(os.getenv('COLOR_CHANGE_MINUTE', '0'))  # Default minute is 0
+
 # File names.
 REQUEST_COUNT_FILE = 'user_requests.json'
 VECTOR_STORE_ID_FILE = 'vector_store_id.json'

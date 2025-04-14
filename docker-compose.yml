@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   discord_ai_bot-5.1:
     build: .

@@ -7,6 +7,8 @@ from logger_config import setup_logger
 from clients import get_openai_client, get_google_genai_client, get_claude_client, get_grok_client
 from state import BotState
 from commands import CommandHandler, CommandGroup  # Import CommandGroup
+from task_scheduler import TaskScheduler  # Import generic scheduler
+from role_color_scheduler import RoleColorManager  # Import renamed role color manager
 
 class DiscordBot:
     def __init__(self):
@@ -14,19 +16,26 @@ class DiscordBot:
         
         # Configure intents
         self.intents = discord.Intents.all()  # Initialize intents
-        # Alternatively, uncomment the following lines to customize intents:
-        # self.intents.messages = True  # Enable message-related events
-        # self.intents.guilds = True    # Enable guild-related events
-        # self.intents.message_content = True  # Enable access to message content (required for some commands)
-        # self.intents.members = True   # Enable member-related events (if needed)
-
+        
         self.client = discord.AutoShardedClient(intents=self.intents)
         self.tree = app_commands.CommandTree(self.client)
         self.bot_state = BotState(timeout=3600)
         self.response_channels = {}  # Cache response channels by guild ID
 
+        # Initialize the generic task scheduler
+        self.scheduler = TaskScheduler(self.client)
+        
+        # Initialize the role color manager with the scheduler
+        self.role_color_manager = RoleColorManager(self.client, self.scheduler)
+
         # Pass response_channels to CommandHandler
-        self.command_handler = CommandHandler(self.bot_state, self.tree, self.response_channels, self.logger)
+        self.command_handler = CommandHandler(
+            self.bot_state, 
+            self.tree, 
+            self.response_channels, 
+            self.logger,
+            self.role_color_manager  # Pass the role color manager
+        )
 
         # Initialize API clients
         self.openai_client = get_openai_client(OPENAI_API_KEY)
@@ -72,17 +81,39 @@ class DiscordBot:
                 self.response_channels[guild.id] = response_channel
 
                 self.logger.info(f"Response channel cached for guild '{guild.name}': {response_channel.name} (ID: {response_channel.id})")
+            
+            # Start the role color manager
+            self.role_color_manager.start()
+            
+            # We could schedule other tasks here as examples
+            self.scheduler.schedule_interval(
+                self.example_interval_task, 
+                hours=1,  # Run every hour
+                task_id="hourly_example_task"
+            )
+            
+            # Start all scheduled tasks
+            self.scheduler.start_all()
 
         # Run the bot
         self.client.run(DISCORD_BOT_TOKEN)
+    
+    async def example_interval_task(self):
+        """An example task that runs at an interval"""
+        self.logger.info("Running example interval task")
+        # This is just a placeholder method
+
 
 class CommandHandler:
     """Main command handler for registering commands."""
-    def __init__(self, bot_state: BotState, tree: discord.app_commands.CommandTree, response_channels: dict, logger: logging.Logger):
+    def __init__(self, bot_state: BotState, tree: discord.app_commands.CommandTree, 
+                 response_channels: dict, logger: logging.Logger, 
+                 role_color_manager: RoleColorManager):
         self.logger = logger  # Use the logger passed from DiscordBot
         self.bot_state = bot_state
         self.tree = tree
         self.response_channels = response_channels  # Store response_channels
+        self.role_color_manager = role_color_manager  # Store the role color manager
 
     def register_commands(self, client: discord.Client, openai_client, google_client, claude_client, grok_client):
         # Register the /ask command group
@@ -107,6 +138,60 @@ class CommandHandler:
             user_state.clear_history()
             self.logger.info(f"Cleared history for user {interaction.user}")
             await interaction.response.send_message("Your conversation history has been cleared.")
+            
+        # Register the /change_role_color command
+        @self.tree.command(name="change_role_color", description="Change the color of the configured role to a random color")
+        @app_commands.default_permissions(manage_roles=True)
+        async def change_role_color(interaction: discord.Interaction):
+            self.logger.info(f"User {interaction.user} invoked /change_role_color")
+            await interaction.response.defer()
+            
+            try:
+                # Call the manual color change function
+                success = await self.role_color_manager.change_role_color_now(interaction.guild_id)
+                
+                if success:
+                    await interaction.followup.send("Role color changed successfully!")
+                else:
+                    await interaction.followup.send("Failed to change role color. Check if the role exists.")
+            except Exception as e:
+                self.logger.error(f"Error changing role color: {e}", exc_info=True)
+                await interaction.followup.send("An error occurred while changing the role color.")
+
+        # Example of scheduling a one-time task from a command
+        @self.tree.command(name="remind_me", description="Set a reminder for later")
+        async def remind_me(interaction: discord.Interaction, 
+                           hours: int = 0, 
+                           minutes: int = 0,
+                           message: str = "Reminder!"):
+            
+            self.logger.info(f"User {interaction.user} set a reminder for {hours}h {minutes}m: {message}")
+            
+            # Define a callback for the reminder
+            async def send_reminder(user_id, channel_id, reminder_message):
+                user = client.get_user(int(user_id))
+                channel = client.get_channel(int(channel_id))
+                if channel:
+                    await channel.send(f"<@{user_id}> Reminder: {reminder_message}")
+                    self.logger.info(f"Sent reminder to user {user_id}")
+            
+            from task_scheduler import TaskScheduler
+            scheduler = client._connection._get_client().scheduler
+            
+            # Schedule the reminder
+            await scheduler.schedule_wait(
+                send_reminder,
+                hours=hours,
+                minutes=minutes,
+                user_id=str(interaction.user.id),
+                channel_id=str(interaction.channel_id),
+                reminder_message=message
+            )
+            
+            total_minutes = hours * 60 + minutes
+            await interaction.response.send_message(
+                f"I'll remind you about '{message}' in {total_minutes} minutes!"
+            )
 
 if __name__ == "__main__":
     bot = DiscordBot()

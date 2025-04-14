@@ -1,9 +1,9 @@
 version: '3.9'
 
 services:
-  discord_ai_bot:
+  discord_ai_bot-5.1:
     build: .
-    container_name: discord_ai_bot
+    container_name: discord_ai_bot-5.1
     restart: always
     environment:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}

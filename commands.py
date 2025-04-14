@@ -1,14 +1,14 @@
 import discord
 import logging
 from discord import app_commands
-from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, RESPONSE_CHANNEL_ID
+from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, GROK_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, RESPONSE_CHANNEL_ID
 from state import BotState
 from utilities import route_response
-from ai_clients import OpenAIStrategy, GoogleGenAIStrategy, ClaudeStrategy
+from ai_clients import OpenAIStrategy, GoogleGenAIStrategy, ClaudeStrategy, GrokStrategy
 
 class CommandGroup(app_commands.Group):  # Ensure proper inheritance from app_commands.Group
     """Command group for /ask commands."""
-    def __init__(self, bot_state: BotState, logger: logging.Logger, client: discord.Client, openai_client, google_client, claude_client, response_channels: dict):
+    def __init__(self, bot_state: BotState, logger: logging.Logger, client: discord.Client, openai_client, google_client, claude_client, grok_client, response_channels: dict):
         super().__init__(name="ask", description="Ask various AI models")  # Ensure correct initialization
         self.bot_state = bot_state
         self.logger = logger
@@ -16,6 +16,7 @@ class CommandGroup(app_commands.Group):  # Ensure proper inheritance from app_co
         self.openai_client = openai_client
         self.google_client = google_client
         self.claude_client = claude_client
+        self.grok_client = grok_client
         self.response_channels = response_channels  # Store response channels
 
     @app_commands.command(name="gpt", description="Ask GPT-4o-mini a question")
@@ -34,6 +35,12 @@ class CommandGroup(app_commands.Group):  # Ensure proper inheritance from app_co
     async def ask_claude(self, interaction: discord.Interaction, question: str):
         await self.handle_prompt_command(
             interaction, question, self.claude_client, "Claude", CLAUDE_SYSTEM_PROMPT
+        )
+        
+    @app_commands.command(name="grok", description="Ask Grok a witty question")
+    async def ask_grok(self, interaction: discord.Interaction, question: str):
+        await self.handle_prompt_command(
+            interaction, question, self.grok_client, "Grok", GROK_SYSTEM_PROMPT
         )
 
     async def handle_prompt_command(self, interaction: discord.Interaction, prompt: str, client, description: str, system_prompt: str):
@@ -55,6 +62,8 @@ class CommandGroup(app_commands.Group):  # Ensure proper inheritance from app_co
                 strategy = GoogleGenAIStrategy(client, self.logger)  # Pass the logger to the base class
             elif description == "Claude":
                 strategy = ClaudeStrategy(client, self.logger)  # Pass the logger to the base class
+            elif description == "Grok":
+                strategy = GrokStrategy(client, self.logger)  # Pass the logger to the base class
             else:
                 raise ValueError(f"Unsupported AI model: {description}")
 
@@ -96,7 +105,7 @@ class CommandHandler:
         self.tree = tree
         self.response_channels = response_channels  # Cache response channels
 
-    def register_commands(self, client: discord.Client, openai_client, google_client, claude_client):
+    def register_commands(self, client: discord.Client, openai_client, google_client, claude_client, grok_client):
         try:
             # Register the /ask command group
             self.tree.add_command(CommandGroup(
@@ -106,6 +115,7 @@ class CommandHandler:
                 openai_client=openai_client,
                 google_client=google_client,
                 claude_client=claude_client,
+                grok_client=grok_client,  # Pass the Grok client
                 response_channels=self.response_channels  # Pass the response channels
             ))
             self.logger.info("Registered /ask command group.")

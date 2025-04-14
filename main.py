@@ -2,9 +2,9 @@ import discord
 import logging  # Ensure logging is imported
 from discord import app_commands
 from discord.utils import get  # Import utility for searching channels
-from config import DISCORD_BOT_TOKEN, OPENAI_API_KEY, GOOGLE_GENAI_API_KEY, CLAUDE_API_KEY
+from config import DISCORD_BOT_TOKEN, OPENAI_API_KEY, GOOGLE_GENAI_API_KEY, CLAUDE_API_KEY, GROK_API_KEY
 from logger_config import setup_logger
-from clients import get_openai_client, get_google_genai_client, get_claude_client
+from clients import get_openai_client, get_google_genai_client, get_claude_client, get_grok_client
 from state import BotState
 from commands import CommandHandler, CommandGroup  # Import CommandGroup
 
@@ -32,10 +32,11 @@ class DiscordBot:
         self.openai_client = get_openai_client(OPENAI_API_KEY)
         self.google_client = get_google_genai_client(GOOGLE_GENAI_API_KEY)
         self.claude_client = get_claude_client(CLAUDE_API_KEY)
+        self.grok_client = get_grok_client(GROK_API_KEY)
 
         # Register commands
         self.command_handler.register_commands(
-            self.client, self.openai_client, self.google_client, self.claude_client
+            self.client, self.openai_client, self.google_client, self.claude_client, self.grok_client
         )
 
     def run(self):
@@ -83,7 +84,7 @@ class CommandHandler:
         self.tree = tree
         self.response_channels = response_channels  # Store response_channels
 
-    def register_commands(self, client: discord.Client, openai_client, google_client, claude_client):
+    def register_commands(self, client: discord.Client, openai_client, google_client, claude_client, grok_client):
         # Register the /ask command group
         self.tree.add_command(CommandGroup(
             bot_state=self.bot_state,
@@ -92,6 +93,7 @@ class CommandHandler:
             openai_client=openai_client,
             google_client=google_client,
             claude_client=claude_client,
+            grok_client=grok_client,  # Pass the Grok client
             response_channels=self.response_channels  # Pass the response channels
         ))
         self.logger.info("Registered /ask command group.")

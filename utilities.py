@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from config import REQUEST_COUNT_FILE, RESET_HOURS
 import logging
 from typing import Optional  # Import Optional for type hinting
+from random_ascii_emoji import get_random_emoji  # Import the random emoji function
 
 logger = logging.getLogger('discord_bot')  # Ensure consistent logger name
 
@@ -153,12 +154,12 @@ async def route_response(
         # If a summary exists, send the summary to the user
         await interaction.followup.send(f"✉️: {prompt}\n📫: {summary}")
 
-        # Send the full response to the response channel
-        logger.info(f"Sending full response to channel: {response_channel.name} (ID: {response_channel.id})")
-        chunks = split_message(f"✉️: {prompt}\n📫: {result}", limit=2000)
+        # Append a random emoji to the full response for the response channel
+        emoji = get_random_emoji()
+        chunks = split_message(f"✉️: {prompt}\n📫: {result}\n\n{emoji}", limit=2000)
         for chunk in chunks:
             await response_channel.send(chunk)
-        logger.info("Full response sent to response channel.")
+        logger.info("Full response sent to response channel with emoji buffer.")
     except Exception as e:
         logger.error(f"Error while routing response: {e}", exc_info=True)
         await interaction.followup.send("An error occurred while routing the response.")

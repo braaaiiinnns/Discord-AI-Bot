@@ -18,7 +18,12 @@ class OpenAIStrategy(AIClientStrategy):
         """Generate a response using the OpenAI client."""
         self.logger.info("Using OpenAI client for response generation.")
         messages = [{"role": "system", "content": system_prompt}] + context
-        response = self.client.chat.completions.create(model="gpt-4o-mini", messages=messages)
+        
+        # For older versions of openai library (< 1.0.0)
+        response = self.client.ChatCompletion.create(
+            model="gpt-4o-mini", 
+            messages=messages
+        )
         return response.choices[0].message.content.strip()
 
 class GoogleGenAIStrategy(AIClientStrategy):
@@ -66,3 +71,22 @@ class ClaudeStrategy(AIClientStrategy):
         else:
             self.logger.error("Claude API response does not contain 'content'.")
             raise ValueError("Claude API response does not contain 'content'.")
+
+class GrokStrategy(AIClientStrategy):
+    def __init__(self, client, logger):
+        super().__init__(logger)  # Pass the logger to the base class
+        self.client = client
+
+    async def generate_response(self, context: list, system_prompt: str) -> str:
+        """Generate a response using the xAI/Grok client with OpenAI SDK."""
+        self.logger.info("Using xAI/Grok client with OpenAI SDK for response generation.")
+        messages = [{"role": "system", "content": system_prompt}] + context
+        
+        # For older versions of openai library (< 1.0.0)
+        response = self.client.ChatCompletion.create(
+            model="grok-3-beta",  # Updated to use the latest Grok model
+            messages=messages,
+            temperature=0.7,
+            max_tokens=2048
+        )
+        return response.choices[0].message.content.strip()

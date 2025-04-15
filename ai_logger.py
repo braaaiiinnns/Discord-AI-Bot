@@ -59,8 +59,8 @@ class AIInteractionLogger:
                 'metadata': json.dumps(metadata) if metadata else None
             }
             
-            # Store in database
-            self.db.store_ai_interaction(interaction_data)
+            # Store in database using the queue to prevent concurrent access issues
+            await self.db.queue.execute(lambda: self.db.store_ai_interaction(interaction_data))
             logger.debug(f"Logged AI interaction {interaction_id} from user {user_id}")
             
             return interaction_id
@@ -69,7 +69,7 @@ class AIInteractionLogger:
             logger.error(f"Error logging AI interaction: {e}", exc_info=True)
             return None
     
-    def get_interaction(self, interaction_id):
+    async def get_interaction(self, interaction_id):
         """
         Retrieve an AI interaction by ID.
         
@@ -79,9 +79,14 @@ class AIInteractionLogger:
         Returns:
             dict: The interaction data or None if not found
         """
-        return self.db.get_ai_interaction(interaction_id)
+        try:
+            # Use the queue to prevent concurrent access issues
+            return await self.db.queue.execute(lambda: self.db.get_ai_interaction(interaction_id))
+        except Exception as e:
+            logger.error(f"Error retrieving AI interaction: {e}", exc_info=True)
+            return None
     
-    def get_user_interactions(self, user_id, limit=100, offset=0):
+    async def get_user_interactions(self, user_id, limit=100, offset=0):
         """
         Retrieve AI interactions for a specific user.
         
@@ -93,7 +98,14 @@ class AIInteractionLogger:
         Returns:
             list: List of interaction data
         """
-        return self.db.get_user_ai_interactions(user_id, limit, offset)
+        try:
+            # Use the queue to prevent concurrent access issues
+            return await self.db.queue.execute(
+                lambda: self.db.get_user_ai_interactions(user_id, limit, offset)
+            )
+        except Exception as e:
+            logger.error(f"Error retrieving user AI interactions: {e}", exc_info=True)
+            return []
     
     def close(self):
         """Close the database connection"""

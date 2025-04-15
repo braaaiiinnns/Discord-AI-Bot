@@ -27,26 +27,26 @@ class TaskScheduler:
         self.task_id_counter = 0
         
         # Set timezone with multiple fallbacks to ensure reliability
-        self.timezone = timezone or TIMEZONE
+        self.timezone_name = str(timezone or TIMEZONE)  # Ensure timezone is stored as a string
         try:
-            self.tz = pytz.timezone(self.timezone)
-            logger.info(f"TaskScheduler initialized with timezone: {self.timezone}")
+            self.tz = pytz.timezone(self.timezone_name)
+            logger.info(f"TaskScheduler initialized with timezone: {self.timezone_name}")
         except pytz.exceptions.UnknownTimeZoneError:
-            logger.warning(f"Unknown timezone: {self.timezone}, trying system default from config")
+            logger.warning(f"Unknown timezone: {self.timezone_name}, trying system default from config")
             try:
                 # Try to get the system timezone from config
                 from config import get_system_timezone
                 system_tz = get_system_timezone()
-                self.timezone = system_tz
-                self.tz = pytz.timezone(self.timezone)
-                logger.info(f"Using system timezone: {self.timezone}")
+                self.timezone_name = str(system_tz)
+                self.tz = pytz.timezone(self.timezone_name)
+                logger.info(f"Using system timezone: {self.timezone_name}")
             except Exception as e:
                 logger.warning(f"Failed to get system timezone: {e}, falling back to UTC")
-                self.timezone = "UTC"
+                self.timezone_name = "UTC"
                 self.tz = pytz.UTC
         except Exception as e:
             logger.error(f"Unexpected error setting timezone: {e}, falling back to UTC")
-            self.timezone = "UTC"
+            self.timezone_name = "UTC"
             self.tz = pytz.UTC
     
     def get_new_task_id(self):
@@ -67,7 +67,7 @@ class TaskScheduler:
     
     def _convert_to_utc(self, time: datetime.time) -> datetime.time:
         """Convert a time from the configured timezone to UTC"""
-        if self.timezone == "UTC":
+        if self.timezone_name == "UTC":
             return time
         
         # Create a datetime object for today with the given time in the configured timezone
@@ -77,7 +77,7 @@ class TaskScheduler:
         
         # Convert to UTC
         utc_dt = dt.astimezone(pytz.UTC)
-        logger.info(f"Converted time from {time} {self.timezone} to {utc_dt.time()} UTC")
+        logger.info(f"Converted time from {time} {self.timezone_name} to {utc_dt.time()} UTC")
         return utc_dt.time()
     
     def _local_now(self) -> datetime.datetime:
@@ -110,12 +110,12 @@ class TaskScheduler:
         async def before_task():
             await self.client.wait_until_ready()
             if use_timezone:
-                logger.info(f"Task {task_id} is ready and waiting for scheduled time {time} {self.timezone} (UTC: {utc_time})")
+                logger.info(f"Task {task_id} is ready and waiting for scheduled time {time} {self.timezone_name} (UTC: {utc_time})")
             else:
                 logger.info(f"Task {task_id} is ready and waiting for scheduled time {time} UTC")
         
         self.scheduled_tasks[task_id] = scheduled_task
-        tz_info = f"{self.timezone}" if use_timezone else "UTC"
+        tz_info = f"{self.timezone_name}" if use_timezone else "UTC"
         logger.info(f"Scheduled task {task_id} to run at {time} {tz_info}")
         return task_id
     
@@ -227,11 +227,11 @@ class TaskScheduler:
         @scheduled_task.before_loop
         async def before_task():
             await self.client.wait_until_ready()
-            tz_info = f"{self.timezone}" if use_timezone else "UTC"
+            tz_info = f"{self.timezone_name}" if use_timezone else "UTC"
             logger.info(f"Cron task {task_id} is ready using timezone {tz_info}")
         
         self.scheduled_tasks[task_id] = scheduled_task
-        tz_info = f"{self.timezone}" if use_timezone else "UTC"
+        tz_info = f"{self.timezone_name}" if use_timezone else "UTC"
         cron_desc = f"hour={hour}, minute={minute}, day_of_week={day_of_week}, timezone={tz_info}"
         logger.info(f"Scheduled cron task {task_id} with {cron_desc}")
         return task_id

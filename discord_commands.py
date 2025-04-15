@@ -1,21 +1,24 @@
 import discord
 import logging
+import time
 from discord import app_commands
 from ai_services import OpenAIStrategy, GoogleGenAIStrategy, ClaudeStrategy, GrokStrategy
-from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, GROK_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT
+from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, GROK_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, ENCRYPTION_KEY
 from state import BotState
 from utilities import route_response
+from ai_logger import AIInteractionLogger
 
 class BotCommands:
     """Handler for Discord bot commands"""
     
     def __init__(self, client: discord.Client, bot_state: BotState, tree: app_commands.CommandTree, 
-                 response_channels: dict, logger: logging.Logger):
+                 response_channels: dict, logger: logging.Logger, ai_logger: AIInteractionLogger = None):
         self.client = client
         self.bot_state = bot_state
         self.tree = tree
         self.response_channels = response_channels
         self.logger = logger
+        self.ai_logger = ai_logger
         
         # AI clients - will be initialized with register_commands
         self.openai_client = None
@@ -144,12 +147,37 @@ class BotCommands:
         await interaction.response.defer()
         
         try:
+            # Record start time for performance tracking
+            start_time = time.time()
+            
             # Generate response using the appropriate strategy
             self.logger.info(f"Generating response using {model_name}...")
             result = await strategy.generate_response(context, system_prompt)
             
+            # Calculate execution time
+            execution_time = time.time() - start_time
+            
             # Update user state with the assistant's response
             user_state.add_prompt("assistant", result)
+            
+            # Log the AI interaction if logger is available
+            if self.ai_logger:
+                guild_id = interaction.guild.id if interaction.guild else "DM"
+                await self.ai_logger.log_interaction(
+                    user_id=uid,
+                    guild_id=guild_id,
+                    channel_id=interaction.channel_id,
+                    model=model_name,
+                    prompt=prompt,
+                    response=result,
+                    execution_time=execution_time,
+                    metadata={
+                        "system_prompt": system_prompt,
+                        "context_length": len(context),
+                        "channel_name": interaction.channel.name if hasattr(interaction.channel, "name") else "DM",
+                        "user_name": f"{interaction.user.name}#{interaction.user.discriminator}" if hasattr(interaction.user, "discriminator") else interaction.user.name
+                    }
+                )
             
             # Determine if summarization is needed
             summary = None

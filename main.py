@@ -1,8 +1,13 @@
 import discord
 import logging
+import os
 from discord import app_commands
 from discord.utils import get
-from config import DISCORD_BOT_TOKEN, OPENAI_API_KEY, GOOGLE_GENAI_API_KEY, CLAUDE_API_KEY, GROK_API_KEY, TIMEZONE
+from config import (
+    DISCORD_BOT_TOKEN, OPENAI_API_KEY, GOOGLE_GENAI_API_KEY, CLAUDE_API_KEY, 
+    GROK_API_KEY, TIMEZONE, MESSAGES_DB_PATH, AI_INTERACTIONS_DB_PATH,
+    ENCRYPTION_KEY, ENABLE_MESSAGE_LOGGING, ENABLE_AI_LOGGING
+)
 from logger_config import setup_logger
 from ai_services import get_openai_client, get_google_genai_client, get_claude_client, get_grok_client
 from state import BotState
@@ -10,6 +15,8 @@ from discord_commands import BotCommands
 from task_scheduler import TaskScheduler
 from role_color_manager import RoleColorManager
 from task_manager import TaskManager
+from message_monitor import MessageMonitor
+from ai_logger import AIInteractionLogger
 
 class DiscordBot:
     """Main Discord bot class that initializes and runs the bot"""
@@ -26,6 +33,9 @@ class DiscordBot:
         self.bot_state = BotState(timeout=3600)
         self.response_channels = {}  # Cache response channels by guild ID
         
+        # Initialize message and AI logging services
+        self._init_logging_services()
+        
         # Initialize task infrastructure
         self._init_task_infrastructure()
         
@@ -38,8 +48,40 @@ class DiscordBot:
             self.bot_state,
             self.tree,
             self.response_channels,
-            self.logger
+            self.logger,
+            self.ai_logger if ENABLE_AI_LOGGING else None
         )
+    
+    def _init_logging_services(self):
+        """Initialize message monitoring and AI logging services"""
+        try:
+            # Ensure data directory exists
+            os.makedirs(os.path.dirname(MESSAGES_DB_PATH), exist_ok=True)
+            
+            # Initialize message monitor if enabled
+            self.message_monitor = None
+            if ENABLE_MESSAGE_LOGGING:
+                self.message_monitor = MessageMonitor(
+                    self.client,
+                    MESSAGES_DB_PATH,
+                    ENCRYPTION_KEY
+                )
+                self.logger.info("Message monitoring service initialized")
+            
+            # Initialize AI logger if enabled
+            self.ai_logger = None
+            if ENABLE_AI_LOGGING:
+                self.ai_logger = AIInteractionLogger(
+                    AI_INTERACTIONS_DB_PATH,
+                    ENCRYPTION_KEY
+                )
+                self.logger.info("AI interaction logging service initialized")
+                
+        except Exception as e:
+            self.logger.error(f"Error initializing logging services: {e}", exc_info=True)
+            # Continue without logging services if they fail to initialize
+            self.message_monitor = None
+            self.ai_logger = None
         
     def _init_task_infrastructure(self):
         """Initialize task scheduling infrastructure"""
@@ -134,6 +176,28 @@ class DiscordBot:
             self.response_channels[guild.id] = response_channel
             self.logger.info(f"Response channel cached for {guild.name}: {response_channel.name} (ID: {response_channel.id})")
 
+    def cleanup(self):
+        """Clean up resources before shutting down"""
+        try:
+            # Close database connections
+            if hasattr(self, 'message_monitor') and self.message_monitor:
+                self.message_monitor.close()
+                self.logger.info("Message monitor closed")
+                
+            if hasattr(self, 'ai_logger') and self.ai_logger:
+                self.ai_logger.close()
+                self.logger.info("AI logger closed")
+                
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {e}", exc_info=True)
+
 if __name__ == "__main__":
     bot = DiscordBot()
-    bot.run()
+    try:
+        bot.run()
+    except KeyboardInterrupt:
+        print("Bot shutting down gracefully...")
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        bot.cleanup()

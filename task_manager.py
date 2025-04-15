@@ -179,10 +179,17 @@ class TaskManager:
             except Exception as e:
                 self.logger.error(f"Error scheduling task '{task_config.get('task_id')}': {e}", exc_info=True)
         
-        # Start all registered tasks
+        # Start registered tasks if they aren't already running
         for task_id in self.task_ids:
-            self.scheduler.start_task(task_id)
-            self.logger.info(f"Started task: {task_id}")
+            try:
+                # Check if the task exists in the scheduler and is not already running
+                if task_id in self.scheduler.scheduled_tasks and not self.scheduler.scheduled_tasks[task_id].is_running():
+                    self.scheduler.start_task(task_id)
+                    self.logger.info(f"Started task: {task_id}")
+                else:
+                    self.logger.info(f"Task {task_id} is already running or doesn't exist")
+            except Exception as e:
+                self.logger.error(f"Error starting task {task_id}: {e}", exc_info=True)
     
     async def example_interval_task(self):
         """An example task that runs at an interval."""

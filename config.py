@@ -58,3 +58,14 @@ ENCRYPTION_KEY = os.getenv('ENCRYPTION_KEY', 'your_default_encryption_key_please
 # Message and AI logging configuration
 ENABLE_MESSAGE_LOGGING = True
 ENABLE_AI_LOGGING = True
+
+# Dashboard configuration
+ENABLE_DASHBOARD = True
+DASHBOARD_HOST = os.getenv('DASHBOARD_HOST', '127.0.0.1')
+DASHBOARD_PORT = int(os.getenv('DASHBOARD_PORT', '8050'))
+
+# Discord OAuth for Dashboard
+DISCORD_CLIENT_ID = os.getenv('DISCORD_CLIENT_ID')
+DISCORD_CLIENT_SECRET = os.getenv('DISCORD_CLIENT_SECRET')
+DISCORD_REDIRECT_URI = os.getenv('DISCORD_REDIRECT_URI', f'http://{DASHBOARD_HOST}:{DASHBOARD_PORT}/callback')
+DASHBOARD_REQUIRE_LOGIN = os.getenv('DASHBOARD_REQUIRE_LOGIN', 'true').lower() == 'true'

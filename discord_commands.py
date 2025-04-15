@@ -131,6 +131,37 @@ class BotCommands:
                 self.logger.error(f"Error generating image: {e}", exc_info=True)
                 await interaction.followup.send("An error occurred while generating the image. Please try again later.")
         
+        # Dashboard command to get the dashboard URL
+        @self.tree.command(name="dashboard", description="Get the URL to the bot's data dashboard")
+        async def get_dashboard(interaction: discord.Interaction):
+            self.logger.info(f"User {interaction.user} requested dashboard URL")
+            
+            # Check if we can access the dashboard from the client
+            dashboard = None
+            if hasattr(self.client, 'dashboard') and self.client.dashboard and self.client.dashboard.running:
+                dashboard_url = f"http://{self.client.dashboard.host}:{self.client.dashboard.port}"
+                
+                # Respond with the URL (ephemeral message for privacy)
+                embed = discord.Embed(
+                    title="📊 Bot Dashboard",
+                    description=f"Access the data dashboard at: [Dashboard Link]({dashboard_url})",
+                    color=discord.Color.blue()
+                )
+                embed.add_field(
+                    name="What's in the Dashboard?", 
+                    value="• Message activity statistics\n• User engagement metrics\n• File storage analytics\n• AI interaction data"
+                )
+                embed.set_footer(text="Data updates every 60 seconds. Optimized for log(n) access.")
+                
+                # Make the message ephemeral so only the command user can see it
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            else:
+                # Dashboard is not available
+                await interaction.response.send_message(
+                    "⚠️ The dashboard is not currently available. Please contact the bot administrator.",
+                    ephemeral=True
+                )
+        
         self.logger.info("Registered utility commands")
     
     async def _handle_ai_request(self, interaction: discord.Interaction, prompt: str, 

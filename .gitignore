@@ -79,3 +79,13 @@ docs/_build/
 !ascii_emoji.json
 !tasks.json
 !task_examples.json
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+data/ai_interactions.db
+data/messages.db
+data/files/
+data/flask_session/

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import logging
 import openai
+from openai import OpenAI
 
 logger = logging.getLogger('discord_bot')
 
@@ -8,8 +9,8 @@ logger = logging.getLogger('discord_bot')
 
 def get_openai_client(api_key):
     """Initialize and return an OpenAI client"""
-    openai.api_key = api_key
-    return openai
+    # Updated to use the new client approach
+    return OpenAI(api_key=api_key)
 
 def get_google_genai_client(api_key):
     """Initialize and return a Google GenAI client"""
@@ -32,10 +33,8 @@ def get_claude_client(api_key):
 def get_grok_client(api_key):
     """Initialize and return a Grok client (using OpenAI compatible SDK)"""
     try:
-        import openai as grok_client
-        grok_client.api_key = api_key
-        grok_client.api_base = "https://api.x.ai/v1"
-        return grok_client
+        from openai import OpenAI as GrokClient
+        return GrokClient(api_key=api_key, base_url="https://api.x.ai/v1")
     except ImportError as e:
         logger.error("OpenAI library not installed. Please install openai.")
         return None
@@ -59,7 +58,8 @@ class OpenAIStrategy(AIClientStrategy):
         self.logger.info("Using OpenAI client for response generation.")
         messages = [{"role": "system", "content": system_prompt}] + context
         
-        response = self.client.ChatCompletion.create(
+        # Updated to use the new API pattern
+        response = self.client.chat.completions.create(
             model="gpt-4o-mini", 
             messages=messages
         )
@@ -109,7 +109,8 @@ class GrokStrategy(AIClientStrategy):
         self.logger.info("Using xAI/Grok client with OpenAI SDK for response generation.")
         messages = [{"role": "system", "content": system_prompt}] + context
         
-        response = self.client.ChatCompletion.create(
+        # Updated to use the new API pattern
+        response = self.client.chat.completions.create(
             model="grok-3-beta",
             messages=messages,
             temperature=0.7,

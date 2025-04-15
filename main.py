@@ -1,12 +1,14 @@
 import discord
 import logging
 import os
+import asyncio
 from discord import app_commands
 from discord.utils import get
 from config import (
     DISCORD_BOT_TOKEN, OPENAI_API_KEY, GOOGLE_GENAI_API_KEY, CLAUDE_API_KEY, 
     GROK_API_KEY, TIMEZONE, MESSAGES_DB_PATH, AI_INTERACTIONS_DB_PATH,
-    ENCRYPTION_KEY, ENABLE_MESSAGE_LOGGING, ENABLE_AI_LOGGING
+    ENCRYPTION_KEY, ENABLE_MESSAGE_LOGGING, ENABLE_AI_LOGGING,
+    ENABLE_DASHBOARD, DASHBOARD_HOST, DASHBOARD_PORT, DASHBOARD_REQUIRE_LOGIN
 )
 from logger_config import setup_logger
 from ai_services import get_openai_client, get_google_genai_client, get_claude_client, get_grok_client
@@ -17,6 +19,7 @@ from role_color_manager import RoleColorManager
 from task_manager import TaskManager
 from message_monitor import MessageMonitor
 from ai_logger import AIInteractionLogger
+from dashboard import Dashboard
 
 class DiscordBot:
     """Main Discord bot class that initializes and runs the bot"""
@@ -64,9 +67,11 @@ class DiscordBot:
                 self.message_monitor = MessageMonitor(
                     self.client,
                     MESSAGES_DB_PATH,
-                    ENCRYPTION_KEY
+                    ENCRYPTION_KEY,
+                    vision_api_key=GOOGLE_GENAI_API_KEY  # Pass Gemini API key for image analysis
                 )
-                self.logger.info("Message monitoring service initialized")
+                self.logger.info("Message monitoring service initialized" + 
+                                (" with AI content analysis" if GOOGLE_GENAI_API_KEY else ""))
             
             # Initialize AI logger if enabled
             self.ai_logger = None
@@ -77,11 +82,25 @@ class DiscordBot:
                 )
                 self.logger.info("AI interaction logging service initialized")
                 
+            # Initialize dashboard if enabled
+            self.dashboard = None
+            if ENABLE_DASHBOARD and self.message_monitor:
+                self.dashboard = Dashboard(
+                    self.message_monitor,
+                    host=DASHBOARD_HOST,
+                    port=DASHBOARD_PORT,
+                    debug=False,
+                    require_auth=DASHBOARD_REQUIRE_LOGIN,
+                    secret_key=ENCRYPTION_KEY
+                )
+                self.logger.info(f"Dashboard initialized with Discord SSO authentication")
+                
         except Exception as e:
             self.logger.error(f"Error initializing logging services: {e}", exc_info=True)
             # Continue without logging services if they fail to initialize
             self.message_monitor = None
             self.ai_logger = None
+            self.dashboard = None
         
     def _init_task_infrastructure(self):
         """Initialize task scheduling infrastructure"""
@@ -133,20 +152,41 @@ class DiscordBot:
             
             # Sync commands with Discord
             self.logger.info("Syncing commands with Discord...")
-            try:
-                await self.tree.sync()
-                self.logger.info("Commands synced successfully")
-                
-                # Log registered commands
-                commands = self.tree.get_commands()
-                command_names = [cmd.name for cmd in commands]
-                self.logger.info(f"Registered commands: {', '.join(command_names)}")
-            except Exception as e:
-                self.logger.error(f"Failed to sync commands: {e}", exc_info=True)
+            
+            # Add retry mechanism for command sync
+            max_retries = 3
+            retry_count = 0
+            sync_success = False
+            
+            while not sync_success and retry_count < max_retries:
+                try:
+                    await self.tree.sync()
+                    sync_success = True
+                    self.logger.info("Commands synced successfully")
+                    
+                    # Log registered commands
+                    commands = self.tree.get_commands()
+                    command_names = [cmd.name for cmd in commands]
+                    self.logger.info(f"Registered commands: {', '.join(command_names)}")
+                except Exception as e:
+                    retry_count += 1
+                    self.logger.error(f"Failed to sync commands (attempt {retry_count}/{max_retries}): {e}", exc_info=True)
+                    await asyncio.sleep(2)  # Wait before retrying
+            
+            if not sync_success:
+                self.logger.warning("Could not sync commands after multiple attempts. Bot will use cached commands.")
             
             # Start scheduled tasks
             self.task_manager.start_tasks()
             self.logger.info("Scheduled tasks started")
+            
+            # Start dashboard if enabled
+            if self.dashboard:
+                dashboard_url = self.dashboard.start()
+                self.logger.info(f"Dashboard started at {dashboard_url}")
+                
+                # Don't send dashboard URL to response channels automatically
+                # Users can access it via the /dashboard command if needed
         
         # Register commands
         self._register_commands()
@@ -179,6 +219,11 @@ class DiscordBot:
     def cleanup(self):
         """Clean up resources before shutting down"""
         try:
+            # Stop the dashboard if it's running
+            if hasattr(self, 'dashboard') and self.dashboard:
+                self.dashboard.stop()
+                self.logger.info("Dashboard stopped")
+            
             # Close database connections
             if hasattr(self, 'message_monitor') and self.message_monitor:
                 self.message_monitor.close()

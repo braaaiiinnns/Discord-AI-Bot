@@ -18,5 +18,8 @@ COPY . /app
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Explicitly install pytz to ensure it's available
+RUN pip install --no-cache-dir pytz
+
 # Run the bot
 CMD ["python", "main.py"]

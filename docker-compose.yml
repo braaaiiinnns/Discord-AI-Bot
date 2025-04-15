@@ -9,4 +9,6 @@ services:
       - GOOGLE_GENAI_API_KEY=${GOOGLE_GENAI_API_KEY}
       - CLAUDE_API_KEY=${CLAUDE_API_KEY}
     volumes:
-      - .:/app
+      - ./data:/app/data
+      # Only mount the data directory instead of the entire project
+      # This ensures Python packages installed in the container aren't overwritten

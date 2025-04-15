@@ -74,5 +74,8 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+# JSON files (exclude all except specified)
 *.json
 !ascii_emoji.json
+!tasks.json
+!task_examples.json

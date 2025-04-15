@@ -5,3 +5,6 @@ colorama
 google-genai
 anthropic
 openai==0.27.8
+pytz
+tzlocal
+json5

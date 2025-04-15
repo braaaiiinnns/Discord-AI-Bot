@@ -3,8 +3,10 @@ import logging
 import asyncio
 from discord.ext import tasks
 import datetime
+import pytz
 from typing import Callable, Dict, List, Optional, Union, Any, Coroutine
 from enum import Enum
+from config import TIMEZONE
 
 logger = logging.getLogger('discord_bot')
 
@@ -18,11 +20,34 @@ class ScheduleType(Enum):
 class TaskScheduler:
     """A generic task scheduler for Discord bots"""
     
-    def __init__(self, client: discord.Client):
+    def __init__(self, client: discord.Client, timezone: Optional[str] = None):
         self.client = client
         self.scheduled_tasks = {}
         self.one_time_tasks = {}
         self.task_id_counter = 0
+        
+        # Set timezone with multiple fallbacks to ensure reliability
+        self.timezone_name = str(timezone or TIMEZONE)  # Ensure timezone is stored as a string
+        try:
+            self.tz = pytz.timezone(self.timezone_name)
+            logger.info(f"TaskScheduler initialized with timezone: {self.timezone_name}")
+        except pytz.exceptions.UnknownTimeZoneError:
+            logger.warning(f"Unknown timezone: {self.timezone_name}, trying system default from config")
+            try:
+                # Try to get the system timezone from config
+                from config import get_system_timezone
+                system_tz = get_system_timezone()
+                self.timezone_name = str(system_tz)
+                self.tz = pytz.timezone(self.timezone_name)
+                logger.info(f"Using system timezone: {self.timezone_name}")
+            except Exception as e:
+                logger.warning(f"Failed to get system timezone: {e}, falling back to UTC")
+                self.timezone_name = "UTC"
+                self.tz = pytz.UTC
+        except Exception as e:
+            logger.error(f"Unexpected error setting timezone: {e}, falling back to UTC")
+            self.timezone_name = "UTC"
+            self.tz = pytz.UTC
     
     def get_new_task_id(self):
         """Generate a unique task ID"""
@@ -40,28 +65,65 @@ class TaskScheduler:
         except Exception as e:
             logger.error(f"Error in scheduled task {task_id}: {e}", exc_info=True)
     
+    def _convert_to_utc(self, time: datetime.time) -> datetime.time:
+        """Convert a time from the configured timezone to UTC"""
+        if self.timezone_name == "UTC":
+            return time
+        
+        # Create a datetime object for today with the given time in the configured timezone
+        now = datetime.datetime.now(self.tz)
+        dt = datetime.datetime.combine(now.date(), time)
+        dt = self.tz.localize(dt)
+        
+        # Convert to UTC
+        utc_dt = dt.astimezone(pytz.UTC)
+        logger.info(f"Converted time from {time} {self.timezone_name} to {utc_dt.time()} UTC")
+        return utc_dt.time()
+    
+    def _local_now(self) -> datetime.datetime:
+        """Get the current datetime in the configured timezone"""
+        return datetime.datetime.now(self.tz)
+    
     def schedule_at_time(self, callback: Callable, time: datetime.time, 
-                         task_id: Optional[str] = None, *args, **kwargs) -> str:
-        """Schedule a task to run at a specific time each day"""
+                         task_id: Optional[str] = None, use_timezone: bool = True,
+                         *args, **kwargs) -> str:
+        """
+        Schedule a task to run at a specific time each day
+        
+        Parameters:
+        - callback: The function to call
+        - time: The time to run the task (in the configured timezone if use_timezone is True)
+        - task_id: Optional custom task ID
+        - use_timezone: If True, the time is considered to be in the configured timezone
+                       and will be converted to UTC for scheduling
+        """
         task_id = task_id or self.get_new_task_id()
         
-        @tasks.loop(time=time)
+        # Convert time to UTC if needed
+        utc_time = self._convert_to_utc(time) if use_timezone else time
+        
+        @tasks.loop(time=utc_time)
         async def scheduled_task():
             await self._run_task(task_id, callback, *args, **kwargs)
         
         @scheduled_task.before_loop
         async def before_task():
             await self.client.wait_until_ready()
-            logger.info(f"Task {task_id} is ready and waiting for scheduled time {time}")
+            if use_timezone:
+                logger.info(f"Task {task_id} is ready and waiting for scheduled time {time} {self.timezone_name} (UTC: {utc_time})")
+            else:
+                logger.info(f"Task {task_id} is ready and waiting for scheduled time {time} UTC")
         
         self.scheduled_tasks[task_id] = scheduled_task
-        logger.info(f"Scheduled task {task_id} to run at {time} daily")
+        tz_info = f"{self.timezone_name}" if use_timezone else "UTC"
+        logger.info(f"Scheduled task {task_id} to run at {time} {tz_info}")
         return task_id
     
     def schedule_interval(self, callback: Callable, hours: float = 0, minutes: float = 0, 
                           seconds: float = 0, task_id: Optional[str] = None, 
                           *args, **kwargs) -> str:
         """Schedule a task to run at regular intervals"""
+        # Interval scheduling doesn't need timezone conversion, as it's based on relative time
         task_id = task_id or self.get_new_task_id()
         
         # Convert time components to seconds
@@ -84,6 +146,7 @@ class TaskScheduler:
                            seconds: float = 0, task_id: Optional[str] = None, 
                            *args, **kwargs) -> str:
         """Schedule a task to run once after a specified wait time"""
+        # Wait scheduling doesn't need timezone conversion, as it's based on relative time
         task_id = task_id or self.get_new_task_id()
         
         # Convert time components to seconds
@@ -106,22 +169,53 @@ class TaskScheduler:
     
     def schedule_cron(self, callback: Callable, hour: Optional[int] = None, 
                      minute: Optional[int] = None, day_of_week: Optional[Union[int, List[int]]] = None,
-                     task_id: Optional[str] = None, *args, **kwargs) -> str:
-        """Schedule a task using a simplified cron-like format"""
+                     task_id: Optional[str] = None, use_timezone: bool = True,
+                     *args, **kwargs) -> str:
+        """
+        Schedule a task using a simplified cron-like format
+        
+        Parameters:
+        - callback: The function to call
+        - hour, minute: The time to run (in the configured timezone if use_timezone is True)
+        - day_of_week: The day(s) of week to run (0 = Monday, 6 = Sunday)
+        - task_id: Optional custom task ID
+        - use_timezone: If True, the time is considered to be in the configured timezone
+        """
         task_id = task_id or self.get_new_task_id()
         
         # Create a time check function
         def time_matches(now):
-            if hour is not None and now.hour != hour:
-                return False
-            if minute is not None and now.minute != minute:
-                return False
-            if day_of_week is not None:
-                if isinstance(day_of_week, list):
-                    if now.weekday() not in day_of_week:
-                        return False
-                elif now.weekday() != day_of_week:
+            # If we're using a timezone, convert the current time to our timezone
+            if use_timezone:
+                # now comes in as a naive datetime, localize it to UTC first
+                now_utc = pytz.UTC.localize(now)
+                # Convert to our timezone
+                now_local = now_utc.astimezone(self.tz)
+                
+                # Check against the local time values
+                if hour is not None and now_local.hour != hour:
                     return False
+                if minute is not None and now_local.minute != minute:
+                    return False
+                if day_of_week is not None:
+                    if isinstance(day_of_week, list):
+                        if now_local.weekday() not in day_of_week:
+                            return False
+                    elif now_local.weekday() != day_of_week:
+                        return False
+            else:
+                # Use UTC time directly
+                if hour is not None and now.hour != hour:
+                    return False
+                if minute is not None and now.minute != minute:
+                    return False
+                if day_of_week is not None:
+                    if isinstance(day_of_week, list):
+                        if now.weekday() not in day_of_week:
+                            return False
+                    elif now.weekday() != day_of_week:
+                        return False
+            
             return True
         
         @tasks.loop(minutes=1)  # Check every minute
@@ -133,13 +227,15 @@ class TaskScheduler:
         @scheduled_task.before_loop
         async def before_task():
             await self.client.wait_until_ready()
-            logger.info(f"Cron task {task_id} is ready")
+            tz_info = f"{self.timezone_name}" if use_timezone else "UTC"
+            logger.info(f"Cron task {task_id} is ready using timezone {tz_info}")
         
         self.scheduled_tasks[task_id] = scheduled_task
-        cron_desc = f"hour={hour}, minute={minute}, day_of_week={day_of_week}"
+        tz_info = f"{self.timezone_name}" if use_timezone else "UTC"
+        cron_desc = f"hour={hour}, minute={minute}, day_of_week={day_of_week}, timezone={tz_info}"
         logger.info(f"Scheduled cron task {task_id} with {cron_desc}")
         return task_id
-    
+
     def start_task(self, task_id: str) -> bool:
         """Start a scheduled task by ID"""
         if task_id in self.scheduled_tasks:

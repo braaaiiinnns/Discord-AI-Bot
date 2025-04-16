@@ -1,7 +1,7 @@
 services:
-  discord_ai_bot:
+  discord_ai_bot-5.1:
     build: .
-    container_name: discord_ai_bot
+    container_name: discord_ai_bot-5.1
     restart: always
     environment:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
@@ -9,6 +9,7 @@ services:
       - GOOGLE_GENAI_API_KEY=${GOOGLE_GENAI_API_KEY}
       - CLAUDE_API_KEY=${CLAUDE_API_KEY}
     volumes:
+      - .:/app
       - ./data:/app/data
       # Only mount the data directory instead of the entire project
       # This ensures Python packages installed in the container aren't overwritten

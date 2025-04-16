@@ -23,7 +23,7 @@ from app.discord.task_scheduler import TaskScheduler
 from app.discord.role_color_manager import RoleColorManager
 from app.discord.task_manager import TaskManager
 from app.discord.message_monitor import MessageMonitor
-from utils.logger import AIInteractionLogger
+from utils.ai_logger import AIInteractionLogger
 from dashboard import Dashboard
 
 class DiscordBot:

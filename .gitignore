@@ -1,91 +1,39 @@
-# Byte-compiled / optimized / compiled Python files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Virtual environment
-env/
-venv/
-ENV/
-.venv/
-
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
-*.egg
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-.coverage
-*.cover
-.hypothesis/
-.tox/
-.nox/
-.pytest_cache/
-
-# IDE / Editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-*.sublime-workspace
-*.sublime-project
-
-# Jupyter Notebooks
-.ipynb_checkpoints/
-
-# PyCharm
-*.iml
-*.iws
-*.ipr
-.DS_Store
-
-# PyInstaller
-# Usually these files are written by a Python application that is packaged with PyInstaller
-*.manifest
-*.spec
-
-# Logs and debugging files
-*.log
-*.out
-*.err
-logs/
-
-# Local configuration files
+.env
 *.env
 .env.*
-*.ini
-*.cfg
-
-# MacOS-specific files
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv
+venv/
+ENV/
+.idea/
 .DS_Store
-
-# Windows-specific files
-Thumbs.db
-
-# Flask/Django specific
-instance/
-.webassets-cache/
-
-# Sphinx documentation
-docs/_build/
-
-# JSON files (exclude all except specified)
-*.json
-!ascii_emoji.json
-!tasks.json
-!task_examples.json
-
+data/flask_session/
+app/data/flask_session/
+logs/*.log
+.vscode/
 # Database files
 *.db
-*.sqlite
-*.sqlite3
-data/*.db
-data/ai_interactions.db
-data/messages.db
-data/files/
-data/flask_session/
+
+# JSON files (except specific ones)
+*.json
+!config/tasks.json
+!data/files/ascii_emoji.json

@@ -7,7 +7,7 @@ import hashlib
 import aiohttp
 import asyncio
 from datetime import datetime
-from ncrypt import encrypt_data, decrypt_data
+from utils.ncrypt import encrypt_data, decrypt_data
 from typing import List, Dict, Any, Optional, Union, Callable
 from queue import Queue, Empty  # Import Empty exception directly
 from threading import Thread, Lock

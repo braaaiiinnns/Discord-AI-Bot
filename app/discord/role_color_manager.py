@@ -5,8 +5,8 @@ import datetime
 import json
 import os
 import math
-from config import COLOR_CHANGE_ROLE_NAMES, COLOR_CHANGE_HOUR, COLOR_CHANGE_MINUTE, TIMEZONE
-from task_scheduler import TaskScheduler
+from config.config import COLOR_CHANGE_ROLE_NAMES, COLOR_CHANGE_HOUR, COLOR_CHANGE_MINUTE, TIMEZONE
+from app.discord.task_scheduler import TaskScheduler
 
 logger = logging.getLogger('discord_bot')
 

@@ -6,7 +6,7 @@ import datetime
 import pytz
 from typing import Callable, Dict, List, Optional, Union, Any, Coroutine
 from enum import Enum
-from config import TIMEZONE
+from config.config import TIMEZONE
 
 logger = logging.getLogger('discord_bot')
 
@@ -35,7 +35,7 @@ class TaskScheduler:
             logger.warning(f"Unknown timezone: {self.timezone_name}, trying system default from config")
             try:
                 # Try to get the system timezone from config
-                from config import get_system_timezone
+                from config.config import get_system_timezone
                 system_tz = get_system_timezone()
                 self.timezone_name = str(system_tz)
                 self.tz = pytz.timezone(self.timezone_name)

@@ -5,14 +5,14 @@ import json
 import os
 import datetime
 from discord import app_commands
-from task_scheduler import TaskScheduler, ScheduleType
-from role_color_manager import RoleColorManager
+from app.discord.task_scheduler import TaskScheduler, ScheduleType
+from app.discord.role_color_manager import RoleColorManager
 
 class TaskManager:
     """Centralized manager for all scheduled tasks in the Discord bot."""
     
-    # Path to the tasks.json file
-    TASKS_FILE = os.path.join(os.path.dirname(__file__), 'tasks.json')
+    # Path to the tasks.json file - Fixing path to use correct config directory
+    TASKS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', 'tasks.json')
     
     def __init__(self, client: discord.Client, scheduler: TaskScheduler, logger: logging.Logger):
         self.client = client

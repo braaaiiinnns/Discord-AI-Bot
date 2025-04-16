@@ -2,11 +2,11 @@ import discord
 import logging
 import time
 from discord import app_commands
-from ai_services import OpenAIStrategy, GoogleGenAIStrategy, ClaudeStrategy, GrokStrategy
-from config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, GROK_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, ENCRYPTION_KEY
-from state import BotState
-from utilities import route_response
-from ai_logger import AIInteractionLogger
+from utils.ai_services import OpenAIStrategy, GoogleGenAIStrategy, ClaudeStrategy, GrokStrategy
+from config.config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, GROK_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, ENCRYPTION_KEY
+from app.discord.state import BotState
+from utils.utilities import route_response
+from utils.ai_logger import AIInteractionLogger
 
 class BotCommands:
     """Handler for Discord bot commands"""

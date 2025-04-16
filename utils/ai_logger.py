@@ -3,7 +3,7 @@ import json
 import uuid
 import time
 from datetime import datetime
-from database import EncryptedDatabase
+from utils.database import EncryptedDatabase
 
 logger = logging.getLogger('discord_bot')
 

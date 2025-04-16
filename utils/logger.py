@@ -1,12 +1,19 @@
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 from colorama import Fore, Style
 
 def setup_logger():
     logger = logging.getLogger('discord_bot')
     logger.setLevel(logging.DEBUG)
-
-    file_handler = RotatingFileHandler('bot_log.log', maxBytes=10 * 1024 * 1024, backupCount=5)
+    
+    # Create logs directory if it doesn't exist
+    logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
+    os.makedirs(logs_dir, exist_ok=True)
+    
+    # Use an absolute path for the log file
+    log_file_path = os.path.join(logs_dir, 'bot_log.log')
+    file_handler = RotatingFileHandler(log_file_path, maxBytes=10 * 1024 * 1024, backupCount=5)
     console_handler = logging.StreamHandler()
 
     class CustomFormatter(logging.Formatter):

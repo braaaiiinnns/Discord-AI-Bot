@@ -4,8 +4,8 @@ import discord
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-from random_ascii_emoji import get_random_emoji
-from config import REQUEST_COUNT_FILE, RESET_HOURS
+from app.discord.random_ascii_emoji import get_random_emoji
+from config.config import REQUEST_COUNT_FILE, RESET_HOURS
 
 logger = logging.getLogger('discord_bot')
 

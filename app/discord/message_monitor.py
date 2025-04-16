@@ -8,7 +8,7 @@ import asyncio
 import aiohttp
 import time
 from datetime import datetime
-from database import EncryptedDatabase
+from utils.database import EncryptedDatabase
 
 # Optional AI vision imports - will be imported dynamically if configured
 vision_imports_successful = False

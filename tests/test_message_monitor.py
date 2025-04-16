@@ -6,7 +6,7 @@ from discord import Embed, Attachment
 import io
 import sys
 import os
-from message_monitor import MessageMonitor
+from app.discord.message_monitor import MessageMonitor
 
 # Import the MessageMonitor class from the main application
 

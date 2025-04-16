@@ -28,3 +28,11 @@ ENV/
 .DS_Store
 data/flask_session/
 logs/*.log
+.vscode/
+# Database files
+*.db
+
+# JSON files (except specific ones)
+*.json
+!config/tasks.json
+!data/files/ascii_emoji.json

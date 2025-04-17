@@ -60,78 +60,25 @@ class UtilityCogCommands(commands.Cog):
             parent=self.premium_group
         )
         
-        # Add commands to role group
-        self.role_group.add_command(app_commands.Command(
-            name="add",
-            description="Create a new premium role",
-            callback=self.premium_role_add,
-            parameters=[
-                app_commands.Parameter(
-                    name="name",
-                    description="Name of the role to create",
-                    type=discord.AppCommandOptionType.string,
-                    required=True
-                ),
-                app_commands.Parameter(
-                    name="color",
-                    description="HEX color for the role (default: random)",
-                    type=discord.AppCommandOptionType.string,
-                    required=False
-                ),
-                app_commands.Parameter(
-                    name="user",
-                    description="User to assign the role to",
-                    type=discord.AppCommandOptionType.user,
-                    required=True
-                )
-            ]
-        ))
-        
-        self.role_group.add_command(app_commands.Command(
-            name="remove",
-            description="Remove a premium role",
-            callback=self.premium_role_remove,
-            parameters=[
-                app_commands.Parameter(
-                    name="name",
-                    description="Name of the role to remove",
-                    type=discord.AppCommandOptionType.string,
-                    required=True
-                )
-            ]
-        ))
-        
-        self.role_group.add_command(app_commands.Command(
-            name="list",
-            description="List all premium roles",
-            callback=self.premium_role_list
-        ))
-        
-        self.role_group.add_command(app_commands.Command(
-            name="update",
-            description="Update a premium role's properties",
-            callback=self.premium_role_update,
-            parameters=[
-                app_commands.Parameter(
-                    name="name",
-                    description="Name of the role to update",
-                    type=discord.AppCommandOptionType.string,
-                    required=True
-                ),
-                app_commands.Parameter(
-                    name="color",
-                    description="New HEX color for the role",
-                    type=discord.AppCommandOptionType.string,
-                    required=False
-                ),
-                app_commands.Parameter(
-                    name="new_name",
-                    description="New name for the role",
-                    type=discord.AppCommandOptionType.string,
-                    required=False
-                )
-            ]
-        ))
+        # Add commands to role group using decorator approach
+        @self.role_group.command(name="add", description="Create a new premium role")
+        async def role_add_cmd(interaction: discord.Interaction, name: str, color: str = None, user: discord.User = None):
+            await self.premium_role_add(interaction, name, color, user)
+            
+        @self.role_group.command(name="remove", description="Remove a premium role")
+        async def role_remove_cmd(interaction: discord.Interaction, name: str):
+            await self.premium_role_remove(interaction, name)
+            
+        @self.role_group.command(name="list", description="List all premium roles")
+        async def role_list_cmd(interaction: discord.Interaction):
+            await self.premium_role_list(interaction)
+            
+        @self.role_group.command(name="update", description="Update a premium role's properties")
+        async def role_update_cmd(interaction: discord.Interaction, name: str, color: str = None, new_name: str = None):
+            await self.premium_role_update(interaction, name, color, new_name)
+            
+        # Add the command group to the bot's command tree
+        self.bot.tree.add_command(self.premium_group)
     
     def _load_premium_roles(self):
         """Load premium roles from encrypted file"""

@@ -7,7 +7,9 @@ import discord
 import logging
 import os
 import asyncio
+import datetime
 from discord import app_commands
+from discord.ext import commands
 from discord.utils import get
 from config.config import (
     DISCORD_BOT_TOKEN, OPENAI_API_KEY, GOOGLE_GENAI_API_KEY, CLAUDE_API_KEY, 
@@ -18,13 +20,13 @@ from config.config import (
 from utils.logger import setup_logger
 from utils.ai_services import get_openai_client, get_google_genai_client, get_claude_client, get_grok_client
 from app.discord.state import BotState
-from app.discord.commands import BotCommands
 from app.discord.task_scheduler import TaskScheduler
 from app.discord.role_color_manager import RoleColorManager
 from app.discord.task_manager import TaskManager
 from app.discord.message_monitor import MessageMonitor
 from utils.ai_logger import AIInteractionLogger
 from dashboard import Dashboard
+from app.discord.cogs import AICogCommands, UtilityCogCommands, RoleColorCog
 
 class DiscordBot:
     """Main Discord bot class that initializes and runs the bot"""
@@ -36,8 +38,9 @@ class DiscordBot:
         
         # Configure Discord client
         self.intents = discord.Intents.all()
-        self.client = discord.AutoShardedClient(intents=self.intents)
-        self.tree = app_commands.CommandTree(self.client)
+        # Use Bot instead of AutoShardedClient for cogs support
+        self.client = commands.Bot(command_prefix="!", intents=self.intents, tree_cls=app_commands.CommandTree)
+        self.tree = self.client.tree
         self.bot_state = BotState(timeout=3600)
         self.response_channels = {}  # Cache response channels by guild ID
         
@@ -49,16 +52,6 @@ class DiscordBot:
         
         # Initialize AI clients
         self._init_ai_clients()
-        
-        # Initialize command handler
-        self.command_handler = BotCommands(
-            self.client,
-            self.bot_state,
-            self.tree,
-            self.response_channels,
-            self.logger,
-            self.ai_logger if ENABLE_AI_LOGGING else None
-        )
     
     def _init_logging_services(self):
         """Initialize message monitoring and AI logging services"""
@@ -131,20 +124,67 @@ class DiscordBot:
         self.grok_client = get_grok_client(GROK_API_KEY)
         self.logger.info("AI clients initialized")
     
-    def _register_commands(self):
-        """Register all bot commands and tasks"""
-        # Register AI commands
-        self.command_handler.register_commands(
-            self.openai_client,
-            self.google_client,
-            self.claude_client,
+    def _load_cogs(self):
+        """Load all bot cogs"""
+        self.logger.info("Loading cogs...")
+        
+        # AI Commands Cog
+        ai_cog = AICogCommands(
+            self.client, 
+            self.bot_state, 
+            self.response_channels, 
+            self.logger, 
+            self.ai_logger if hasattr(self, 'ai_logger') and self.ai_logger else None
+        )
+        ai_cog.setup_clients(
+            self.openai_client, 
+            self.google_client, 
+            self.claude_client, 
             self.grok_client
         )
+        asyncio.run_coroutine_threadsafe(self.client.add_cog(ai_cog), self.client.loop)
+        self.logger.info("AI commands cog loaded")
         
-        # Register scheduled tasks and their commands
-        self.task_manager.register_tasks(self.tree)
+        # Utility Commands Cog
+        utility_cog = UtilityCogCommands(
+            self.client, 
+            self.bot_state, 
+            self.logger
+        )
+        utility_cog.setup_clients(self.openai_client)
+        asyncio.run_coroutine_threadsafe(self.client.add_cog(utility_cog), self.client.loop)
+        self.logger.info("Utility commands cog loaded")
         
-        self.logger.info("All commands and tasks registered")
+        # Role Color Cog
+        role_color_cog = RoleColorCog(
+            self.client,
+            self.role_color_manager,
+            self.logger
+        )
+        asyncio.run_coroutine_threadsafe(self.client.add_cog(role_color_cog), self.client.loop)
+        self.logger.info("Role color cog loaded")
+        
+        # Schedule daily color cycle update
+        self._schedule_color_cycle_task(role_color_cog)
+        
+        self.logger.info("All cogs loaded successfully")
+    
+    def _schedule_color_cycle_task(self, role_color_cog):
+        """Schedule the daily color cycle task"""
+        # Schedule for early morning (3:00 AM) to not interfere with other tasks
+        time = datetime.time(hour=3, minute=0)
+        
+        # Create a task for the color cycle update
+        task_id = self.scheduler.schedule_at_time(
+            role_color_cog.update_role_color_from_cycle,
+            time=time,
+            task_id="role_color_cycle_update",
+            use_timezone=True
+        )
+        
+        # Start the task
+        self.scheduler.start_task(task_id)
+        self.logger.info(f"Role color cycle task scheduled with ID: {task_id} at {time} {TIMEZONE}")
     
     def run(self):
         """Run the Discord bot"""
@@ -154,6 +194,12 @@ class DiscordBot:
             
             # Cache response channels
             await self._find_or_create_response_channels()
+            
+            # Load cogs instead of registering commands
+            self._load_cogs()
+            
+            # Register scheduled tasks
+            self.task_manager.register_tasks(self.tree)
             
             # Sync commands with Discord
             self.logger.info("Syncing commands with Discord...")
@@ -217,9 +263,6 @@ class DiscordBot:
                     await self.message_monitor.process_message_edit(before, after)
                 except Exception as e:
                     self.logger.error(f"Error processing message edit event: {e}", exc_info=True)
-        
-        # Register commands
-        self._register_commands()
         
         # Run the client
         self.logger.info("Starting Discord bot")

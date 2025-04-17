@@ -32,6 +32,10 @@ COLOR_CHANGE_ROLE_NAMES = os.getenv('COLOR_CHANGE_ROLE_NAMES', DEFAULT_COLOR_ROL
 COLOR_CHANGE_HOUR = int(os.getenv('COLOR_CHANGE_HOUR', '0'))  # Default hour is midnight (UTC)
 COLOR_CHANGE_MINUTE = int(os.getenv('COLOR_CHANGE_MINUTE', '0'))  # Default minute is 0
 
+# Premium role settings
+DEFAULT_PREMIUM_ROLES = "Premium,Supporter,VIP,Donor"  # Default list of premium roles
+PREMIUM_ROLE_NAMES = os.getenv('PREMIUM_ROLE_NAMES', DEFAULT_PREMIUM_ROLES).split(',')
+
 # Timezone for scheduled tasks
 TIMEZONE = pytz.timezone('America/Los_Angeles')
 

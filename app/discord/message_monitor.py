@@ -603,3 +603,127 @@ class MessageMonitor:
     def close(self):
         """Close the database connection"""
         self.db.close()
+
+    async def process_message_edit(self, before, after):
+        """
+        Process and store an edited Discord message.
+        
+        Args:
+            before (discord.Message): The Discord message before edit
+            after (discord.Message): The Discord message after edit
+        """
+        try:
+            # Skip messages from the bot itself to avoid circular logging
+            if after.author == self.client.user:
+                return
+                
+            # Skip messages from any bot
+            if after.author.bot:
+                logger.debug(f"Skipping edited message from bot {after.author.name} (ID: {after.author.id})")
+                return
+                
+            # Extract message data for the edited message
+            attachments_data = []
+            for attachment in after.attachments:
+                attachments_data.append({
+                    'id': str(attachment.id),
+                    'filename': attachment.filename,
+                    'url': attachment.url,
+                    'size': attachment.size,
+                    'content_type': attachment.content_type if hasattr(attachment, 'content_type') else None
+                })
+                
+            # Format mentions for metadata
+            mentions = {
+                'users': [str(user.id) for user in after.mentions],
+                'roles': [str(role.id) for role in after.role_mentions],
+                'channels': [str(channel.id) for channel in after.channel_mentions]
+            }
+            
+            # Get additional message flags and properties
+            message_flags = {}
+            for flag_name in dir(after.flags):
+                if not flag_name.startswith('_') and isinstance(getattr(after.flags, flag_name), bool):
+                    message_flags[flag_name] = getattr(after.flags, flag_name)
+            
+            # Create the edit history entry
+            edit_data = {
+                'edit_id': str(uuid.uuid4()),
+                'message_id': str(after.id),
+                'channel_id': str(after.channel.id),
+                'guild_id': str(after.guild.id) if after.guild else "DM",
+                'author_id': str(after.author.id),
+                'before_content': before.content,
+                'after_content': after.content,
+                'edit_timestamp': datetime.now().isoformat(),
+                'attachments': json.dumps(attachments_data) if attachments_data else None,
+                'metadata': json.dumps({
+                    'mentions': mentions,
+                    'embeds_count': len(after.embeds),
+                    'flags': message_flags,
+                    'pinned': after.pinned,
+                    'system_content': after.system_content if hasattr(after, 'system_content') else None,
+                    'reference': str(after.reference.message_id) if after.reference else None
+                })
+            }
+            
+            # Store edit history in database
+            await self.db.queue.execute(lambda: self.db.store_message_edit(edit_data))
+            logger.debug(f"Stored edit for message {after.id} from user {after.author.name}")
+            
+            # Invalidate cache for dashboard data
+            self._invalidate_cache('statistics')
+            self._invalidate_cache('recent_messages')
+            self._invalidate_cache('user_activity')
+            
+            # Check for new attachments or file URLs that weren't in the original message
+            downloaded_files = []
+            file_analysis_tasks = []
+            
+            # Handle new attachments
+            for attachment in after.attachments:
+                # Check if this attachment wasn't in the original message
+                if not any(a.id == attachment.id for a in before.attachments):
+                    file_path = await self.db.download_attachment(
+                        attachment, 
+                        str(after.id), 
+                        str(after.channel.id),
+                        str(after.guild.id) if after.guild else "DM",
+                        str(after.author.id),
+                        is_edit=True
+                    )
+                    if file_path:
+                        file_id = os.path.basename(file_path).split('.')[0]
+                        downloaded_files.append(file_id)
+                        if self.ai_analysis_enabled:
+                            file_analysis_tasks.append(self.analyze_file_content(file_id))
+            
+            # Extract and download new URLs from edited message content
+            if after.content != before.content:
+                content_file_ids = await self._extract_and_download_urls(
+                    after.content,
+                    str(after.id),
+                    str(after.channel.id),
+                    str(after.guild.id) if after.guild else "DM",
+                    str(after.author.id),
+                    is_edit=True
+                )
+                downloaded_files.extend(content_file_ids)
+                if self.ai_analysis_enabled:
+                    for file_id in content_file_ids:
+                        file_analysis_tasks.append(self.analyze_file_content(file_id))
+            
+            # Log the download completion for new files
+            if downloaded_files:
+                logger.info(f"Downloaded {len(downloaded_files)} new files from edited message {after.id}")
+                # Invalidate file types cache
+                self._invalidate_cache('file_types')
+            
+            # Analyze all newly downloaded files in parallel if AI analysis is enabled
+            if self.ai_analysis_enabled and file_analysis_tasks:
+                logger.debug(f"Starting AI analysis for {len(file_analysis_tasks)} files from edited message")
+                await asyncio.gather(*file_analysis_tasks)
+                logger.info(f"Completed AI analysis for {len(file_analysis_tasks)} files from edited message {after.id}")
+            
+        except Exception as e:
+            logger.error(f"Error processing message edit: {e}", exc_info=True)

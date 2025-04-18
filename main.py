@@ -4,6 +4,7 @@
 
 import sys
 import os
+import logging
 
 # Ensure we can import from our project directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -21,10 +22,15 @@ def main():
         print("Bot shutting down...")
     except Exception as e:
         print(f"Error starting bot: {e}")
+        logging.error(f"Error starting bot: {e}", exc_info=True)
     finally:
         # Clean up resources if bot was initialized
         if bot is not None:
-            bot.cleanup()
+            try:
+                bot.cleanup()
+            except Exception as e:
+                print(f"Error during cleanup: {e}")
+                logging.error(f"Error during cleanup: {e}", exc_info=True)
 
 if __name__ == "__main__":
     main()

@@ -25,8 +25,8 @@ from app.discord.role_color_manager import RoleColorManager
 from app.discord.task_manager import TaskManager
 from app.discord.message_monitor import MessageMonitor
 from utils.ai_logger import AIInteractionLogger
-from dashboard import Dashboard
-from app.discord.cogs import AICogCommands, UtilityCogCommands, RoleColorCog
+from app.discord.cogs import PremiumRolesCog, UserStateCog, ImageGeneration, Dashboard, RoleColorCog, MessageListenersCog
+from app.discord.cogs.gen_ai_cog import AICogCommands
 
 class DiscordBot:
     """Main Discord bot class that initializes and runs the bot"""
@@ -52,6 +52,9 @@ class DiscordBot:
         
         # Initialize AI clients
         self._init_ai_clients()
+        
+        # Register setup hook for async initialization
+        self.client.setup_hook = self._setup_hook
     
     def _init_logging_services(self):
         """Initialize message monitoring and AI logging services"""
@@ -83,11 +86,11 @@ class DiscordBot:
             # Initialize dashboard if enabled
             self.dashboard = None
             if ENABLE_DASHBOARD and self.message_monitor:
+                # Import the dashboard module here to avoid circular imports
+                from app.dashboard.dashboard import Dashboard
                 self.dashboard = Dashboard(
-                    self.message_monitor,
-                    host=DASHBOARD_HOST,
+                    message_monitor=self.message_monitor,
                     port=DASHBOARD_PORT,
-                    debug=False,
                     require_auth=DASHBOARD_REQUIRE_LOGIN,
                     secret_key=ENCRYPTION_KEY
                 )
@@ -124,8 +127,8 @@ class DiscordBot:
         self.grok_client = get_grok_client(GROK_API_KEY)
         self.logger.info("AI clients initialized")
     
-    def _load_cogs(self):
-        """Load all bot cogs"""
+    async def _setup_hook(self):
+        """Async setup hook for initializing cogs"""
         self.logger.info("Loading cogs...")
         
         # AI Commands Cog
@@ -142,18 +145,42 @@ class DiscordBot:
             self.claude_client, 
             self.grok_client
         )
-        asyncio.run_coroutine_threadsafe(self.client.add_cog(ai_cog), self.client.loop)
+        await self.client.add_cog(ai_cog)
         self.logger.info("AI commands cog loaded")
         
-        # Utility Commands Cog
-        utility_cog = UtilityCogCommands(
-            self.client, 
-            self.bot_state, 
+        # Premium Roles Cog
+        premium_roles_cog = PremiumRolesCog(
+            self.client,
             self.logger
         )
-        utility_cog.setup_clients(self.openai_client)
-        asyncio.run_coroutine_threadsafe(self.client.add_cog(utility_cog), self.client.loop)
-        self.logger.info("Utility commands cog loaded")
+        await self.client.add_cog(premium_roles_cog)
+        self.logger.info("Premium roles cog loaded")
+        
+        # User State Cog
+        user_state_cog = UserStateCog(
+            self.client,
+            self.bot_state,
+            self.logger
+        )
+        await self.client.add_cog(user_state_cog)
+        self.logger.info("User state cog loaded")
+        
+        # Image Generation Cog
+        image_gen_cog = ImageGeneration(
+            self.client,
+            self.logger
+        )
+        image_gen_cog.setup_clients(self.openai_client)
+        await self.client.add_cog(image_gen_cog)
+        self.logger.info("Image generation cog loaded")
+        
+        # Dashboard Cog
+        dashboard_cog = Dashboard(
+            self.client,
+            self.logger
+        )
+        await self.client.add_cog(dashboard_cog)
+        self.logger.info("Dashboard cog loaded")
         
         # Role Color Cog
         role_color_cog = RoleColorCog(
@@ -161,8 +188,16 @@ class DiscordBot:
             self.role_color_manager,
             self.logger
         )
-        asyncio.run_coroutine_threadsafe(self.client.add_cog(role_color_cog), self.client.loop)
+        await self.client.add_cog(role_color_cog)
         self.logger.info("Role color cog loaded")
+        
+        # Message Listeners Cog
+        message_listeners_cog = MessageListenersCog(
+            self.client,
+            self.logger
+        )
+        await self.client.add_cog(message_listeners_cog)
+        self.logger.info("Message listeners cog loaded")
         
         # Schedule daily color cycle update
         self._schedule_color_cycle_task(role_color_cog)
@@ -194,9 +229,6 @@ class DiscordBot:
             
             # Cache response channels
             await self._find_or_create_response_channels()
-            
-            # Load cogs instead of registering commands
-            self._load_cogs()
             
             # Register scheduled tasks
             self.task_manager.register_tasks(self.tree)
@@ -247,6 +279,9 @@ class DiscordBot:
                     
                     # Log the message
                     await self.message_monitor.process_message(message)
+                    
+                    # Process commands (important for cogs to receive messages)
+                    await self.client.process_commands(message)
                 except Exception as e:
                     self.logger.error(f"Error processing message event: {e}", exc_info=True)
             
@@ -305,6 +340,22 @@ class DiscordBot:
             if hasattr(self, 'ai_logger') and self.ai_logger:
                 self.ai_logger.close()
                 self.logger.info("AI logger closed")
+            
+            # Clean up AI clients
+            if hasattr(self, 'openai_client'):
+                self.openai_client = None
+            if hasattr(self, 'google_client'):
+                self.google_client = None
+            if hasattr(self, 'claude_client'):
+                self.claude_client = None
+            if hasattr(self, 'grok_client'):
+                self.grok_client = None
+            self.logger.info("AI clients cleaned up")
+            
+            # Clean up task scheduler
+            if hasattr(self, 'task_scheduler') and self.task_scheduler:
+                self.task_scheduler.stop()
+                self.logger.info("Task scheduler stopped")
                 
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}", exc_info=True)

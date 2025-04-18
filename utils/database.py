@@ -240,30 +240,40 @@ class EncryptedDatabase:
     
     def store_message(self, message_data):
         """
-        Store a Discord message in the database with encryption for sensitive fields.
+        Store a Discord message in the database.
         
         Args:
-            message_data (dict): Message data containing all required fields
+            message_data (dict): Message data to store
+        
+        Returns:
+            bool: Success status
         """
         try:
             # Encrypt sensitive data
-            content_encrypted = encrypt_data(self.encryption_key, message_data['content'])
+            if 'content' in message_data:
+                message_data['content_encrypted'] = encrypt_data(message_data['content'], self.encryption_key)
+                del message_data['content']
+            else:
+                message_data['content_encrypted'] = encrypt_data("", self.encryption_key)
+                
+            if 'attachments' in message_data and message_data['attachments']:
+                message_data['attachments_encrypted'] = encrypt_data(message_data['attachments'], self.encryption_key)
+                del message_data['attachments']
+            else:
+                message_data['attachments_encrypted'] = None
+                
+            if 'metadata' in message_data and message_data['metadata']:
+                message_data['metadata_encrypted'] = encrypt_data(message_data['metadata'], self.encryption_key)
+                del message_data['metadata']
+            else:
+                message_data['metadata_encrypted'] = None
             
-            # Encrypt attachments if present
-            attachments_encrypted = None
-            if message_data.get('attachments'):
-                attachments_encrypted = encrypt_data(self.encryption_key, message_data['attachments'])
-            
-            # Encrypt additional metadata if present
-            metadata_encrypted = None
-            if message_data.get('metadata'):
-                metadata_encrypted = encrypt_data(self.encryption_key, message_data['metadata'])
-            
+            # Insert message into database
             cursor = self.conn.cursor()
             cursor.execute('''
             INSERT OR REPLACE INTO messages (
                 message_id, channel_id, guild_id, author_id, author_name,
-                content_encrypted, timestamp, attachments_encrypted, 
+                content_encrypted, timestamp, attachments_encrypted,
                 message_type, is_bot, metadata_encrypted
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
@@ -272,23 +282,116 @@ class EncryptedDatabase:
                 message_data['guild_id'],
                 message_data['author_id'],
                 message_data['author_name'],
-                content_encrypted,
+                message_data['content_encrypted'],
                 message_data['timestamp'],
-                attachments_encrypted,
+                message_data['attachments_encrypted'],
                 message_data['message_type'],
                 1 if message_data['is_bot'] else 0,
-                metadata_encrypted
+                message_data['metadata_encrypted']
             ))
+            
             self.conn.commit()
-            logger.debug(f"Stored message {message_data['message_id']} in database")
-        except sqlite3.Error as e:
-            logger.error(f"Error storing message: {e}")
-            self.conn.rollback()
-            raise
+            return True
         except Exception as e:
-            logger.error(f"Unexpected error storing message: {e}")
-            self.conn.rollback()
-            raise
+            logger.error(f"Error storing message: {e}", exc_info=True)
+            if self.conn:
+                self.conn.rollback()
+            return False
+    
+    def store_message_edit(self, edit_data):
+        """
+        Store a Discord message edit in the database.
+        
+        Args:
+            edit_data (dict): Edit data to store including before and after content
+        
+        Returns:
+            bool: Success status
+        """
+        try:
+            # Create message_edits table if it doesn't exist
+            cursor = self.conn.cursor()
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS message_edits (
+                edit_id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                guild_id TEXT NOT NULL,
+                author_id TEXT NOT NULL,
+                before_content_encrypted TEXT NOT NULL,
+                after_content_encrypted TEXT NOT NULL,
+                edit_timestamp TEXT NOT NULL,
+                attachments_encrypted TEXT,
+                metadata_encrypted TEXT,
+                FOREIGN KEY (message_id) REFERENCES messages (message_id)
+            )
+            ''')
+            
+            # Encrypt sensitive data
+            if 'before_content' in edit_data:
+                edit_data['before_content_encrypted'] = encrypt_data(edit_data['before_content'], self.encryption_key)
+                del edit_data['before_content']
+            else:
+                edit_data['before_content_encrypted'] = encrypt_data("", self.encryption_key)
+                
+            if 'after_content' in edit_data:
+                edit_data['after_content_encrypted'] = encrypt_data(edit_data['after_content'], self.encryption_key)
+                del edit_data['after_content']
+            else:
+                edit_data['after_content_encrypted'] = encrypt_data("", self.encryption_key)
+                
+            if 'attachments' in edit_data and edit_data['attachments']:
+                edit_data['attachments_encrypted'] = encrypt_data(edit_data['attachments'], self.encryption_key)
+                del edit_data['attachments']
+            else:
+                edit_data['attachments_encrypted'] = None
+                
+            if 'metadata' in edit_data and edit_data['metadata']:
+                edit_data['metadata_encrypted'] = encrypt_data(edit_data['metadata'], self.encryption_key)
+                del edit_data['metadata']
+            else:
+                edit_data['metadata_encrypted'] = None
+            
+            # Insert edit data into database
+            cursor = self.conn.cursor()
+            cursor.execute('''
+            INSERT INTO message_edits (
+                edit_id, message_id, channel_id, guild_id, author_id,
+                before_content_encrypted, after_content_encrypted, edit_timestamp,
+                attachments_encrypted, metadata_encrypted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                edit_data['edit_id'],
+                edit_data['message_id'],
+                edit_data['channel_id'],
+                edit_data['guild_id'],
+                edit_data['author_id'],
+                edit_data['before_content_encrypted'],
+                edit_data['after_content_encrypted'],
+                edit_data['edit_timestamp'],
+                edit_data['attachments_encrypted'],
+                edit_data['metadata_encrypted']
+            ))
+            
+            # Also update the original message with the new content
+            cursor.execute('''
+            UPDATE messages
+            SET content_encrypted = ?, attachments_encrypted = ?, metadata_encrypted = ?
+            WHERE message_id = ?
+            ''', (
+                edit_data['after_content_encrypted'],
+                edit_data['attachments_encrypted'],
+                edit_data['metadata_encrypted'],
+                edit_data['message_id']
+            ))
+            
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error storing message edit: {e}", exc_info=True)
+            if self.conn:
+                self.conn.rollback()
+            return False
     
     async def store_message_files(self, message_data):
         """
@@ -474,23 +577,21 @@ class EncryptedDatabase:
     
     def store_reaction(self, reaction_data):
         """
-        Store a reaction to a message in the database.
+        Store a message reaction in the database.
         
         Args:
-            reaction_data (dict): Reaction data containing the message_id, user_id, and emoji details
+            reaction_data (dict): Reaction data to store
             
         Returns:
-            str: Reaction ID if successful, None otherwise
+            bool: Success status
         """
         try:
-            # Generate a unique reaction ID
-            reaction_id = f"reaction_{reaction_data['message_id']}_{reaction_data['user_id']}_{reaction_data['emoji_name']}"
-            
-            # Encrypt additional metadata if present
+            # Encrypt metadata if present
             metadata_encrypted = None
-            if reaction_data.get('metadata'):
-                metadata_encrypted = encrypt_data(self.encryption_key, reaction_data['metadata'])
+            if 'metadata' in reaction_data and reaction_data['metadata']:
+                metadata_encrypted = encrypt_data(reaction_data['metadata'], self.encryption_key)
             
+            # Insert reaction into database
             cursor = self.conn.cursor()
             cursor.execute('''
             INSERT OR REPLACE INTO reactions (
@@ -498,27 +599,22 @@ class EncryptedDatabase:
                 timestamp, metadata_encrypted
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (
-                reaction_id,
+                reaction_data['reaction_id'],
                 reaction_data['message_id'],
                 reaction_data['user_id'],
                 reaction_data['emoji_name'],
                 reaction_data.get('emoji_id'),
-                reaction_data.get('timestamp', datetime.now().isoformat()),
+                reaction_data['timestamp'],
                 metadata_encrypted
             ))
+            
             self.conn.commit()
-            
-            logger.debug(f"Stored reaction {reaction_id} in database")
-            return reaction_id
-            
-        except sqlite3.Error as e:
-            logger.error(f"Error storing reaction: {e}")
-            self.conn.rollback()
-            return None
+            return True
         except Exception as e:
-            logger.error(f"Unexpected error storing reaction: {e}")
-            self.conn.rollback()
-            return None
+            logger.error(f"Error storing reaction: {e}", exc_info=True)
+            if self.conn:
+                self.conn.rollback()
+            return False
     
     def remove_reaction(self, message_id, user_id, emoji_name):
         """
@@ -549,21 +645,25 @@ class EncryptedDatabase:
     
     def store_ai_interaction(self, interaction_data):
         """
-        Store an AI interaction in the database with encryption for sensitive fields.
+        Store an AI interaction in the database.
         
         Args:
-            interaction_data (dict): Interaction data containing all required fields
+            interaction_data (dict): AI interaction data to store
+            
+        Returns:
+            bool: Success status
         """
         try:
             # Encrypt sensitive data
-            prompt_encrypted = encrypt_data(self.encryption_key, interaction_data['prompt'])
-            response_encrypted = encrypt_data(self.encryption_key, interaction_data['response'])
+            prompt_encrypted = encrypt_data(interaction_data['prompt'], self.encryption_key)
+            response_encrypted = encrypt_data(interaction_data['response'], self.encryption_key)
             
-            # Encrypt additional metadata if present
+            # Encrypt metadata if present
             metadata_encrypted = None
-            if interaction_data.get('metadata'):
-                metadata_encrypted = encrypt_data(self.encryption_key, interaction_data['metadata'])
+            if 'metadata' in interaction_data and interaction_data['metadata']:
+                metadata_encrypted = encrypt_data(interaction_data['metadata'], self.encryption_key)
             
+            # Insert interaction into database
             cursor = self.conn.cursor()
             cursor.execute('''
             INSERT OR REPLACE INTO ai_interactions (
@@ -584,16 +684,14 @@ class EncryptedDatabase:
                 interaction_data.get('execution_time'),
                 metadata_encrypted
             ))
+            
             self.conn.commit()
-            logger.debug(f"Stored AI interaction {interaction_data['interaction_id']} in database")
-        except sqlite3.Error as e:
-            logger.error(f"Error storing AI interaction: {e}")
-            self.conn.rollback()
-            raise
+            return True
         except Exception as e:
-            logger.error(f"Unexpected error storing AI interaction: {e}")
-            self.conn.rollback()
-            raise
+            logger.error(f"Error storing AI interaction: {e}", exc_info=True)
+            if self.conn:
+                self.conn.rollback()
+            return False
     
     def get_message(self, message_id):
         """
@@ -1100,45 +1198,54 @@ class EncryptedDatabase:
             return False
     
     def _update_file_metadata_sync(self, file_id, metadata_dict):
-        """Synchronous implementation of update_file_metadata for use with the database queue."""
-        try:
-            cursor = self.conn.cursor()
+        """
+        Update file metadata in the database - synchronous version.
+        
+        Args:
+            file_id (str): The file ID to update
+            metadata_dict (dict): New metadata to merge with existing metadata
             
-            # First get existing metadata
-            cursor.execute('SELECT metadata_encrypted FROM files WHERE file_id = ?', (file_id,))
+        Returns:
+            bool: Success status
+        """
+        try:
+            # Get current metadata
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT metadata_encrypted FROM files WHERE file_id = ?", (file_id,))
             row = cursor.fetchone()
             
             if not row:
-                logger.warning(f"File not found for metadata update: {file_id}")
+                logger.error(f"File {file_id} not found when updating metadata")
                 return False
                 
-            # Merge existing metadata with new metadata
-            existing_metadata = {}
-            if row[0]:
+            # Decrypt current metadata
+            current_metadata = {}
+            if row['metadata_encrypted']:
                 try:
-                    existing_metadata = json.loads(decrypt_data(self.encryption_key, row[0]))
+                    current_metadata = json.loads(decrypt_data(self.encryption_key, row['metadata_encrypted']))
                 except Exception as e:
-                    logger.error(f"Error decrypting existing file metadata: {e}")
+                    logger.error(f"Error decrypting metadata: {e}")
+                    # Continue with empty metadata
             
-            updated_metadata = {**existing_metadata, **metadata_dict}
+            # Merge with new metadata
+            updated_metadata = {**current_metadata, **metadata_dict}
             
-            # Encrypt the updated metadata
-            metadata_encrypted = encrypt_data(self.encryption_key, json.dumps(updated_metadata))
+            # Encrypt updated metadata
+            metadata_encrypted = encrypt_data(json.dumps(updated_metadata), self.encryption_key)
             
-            # Update the record
+            # Update database
             cursor.execute(
-                'UPDATE files SET metadata_encrypted = ? WHERE file_id = ?',
+                "UPDATE files SET metadata_encrypted = ? WHERE file_id = ?",
                 (metadata_encrypted, file_id)
             )
+            
             self.conn.commit()
             return True
-        except sqlite3.Error as e:
-            logger.error(f"Error updating file metadata: {e}")
-            self.conn.rollback()
-            return False
+            
         except Exception as e:
-            logger.error(f"Unexpected error updating file metadata: {e}")
-            self.conn.rollback()
+            logger.error(f"Error updating file metadata: {e}", exc_info=True)
+            if self.conn:
+                self.conn.rollback()
             return False
     
     def get_recent_messages(self, limit=25, channel_id=None, guild_id=None):

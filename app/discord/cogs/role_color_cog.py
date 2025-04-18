@@ -21,6 +21,9 @@ class RoleColorCog(commands.Cog):
         self.color_cycle_file = "data/files/role_color_cycles.json"
         self.load_color_cycles()
         
+        # Path to premium roles file
+        self.premium_roles_file = "data/files/premium_roles.json"
+        
         # Create command group
         self.color_group = app_commands.Group(name="color", description="Manage your role color")
         
@@ -329,6 +332,17 @@ class RoleColorCog(commands.Cog):
         except Exception as e:
             self.logger.error(f"Error saving color cycles: {e}", exc_info=True)
     
+    def _load_premium_roles(self):
+        """Load premium roles from file"""
+        if not os.path.exists(self.premium_roles_file):
+            return {}
+        try:
+            with open(self.premium_roles_file, "r") as file:
+                return json.load(file)
+        except Exception as e:
+            self.logger.error(f"Error loading premium roles: {e}", exc_info=True)
+            return {}
+
     async def _check_premium_access(self, interaction: discord.Interaction) -> tuple[bool, discord.Role]:
         """
         Check if the user has access to premium color commands
@@ -338,15 +352,42 @@ class RoleColorCog(commands.Cog):
         # Get user's roles
         user_roles = interaction.user.roles
         
+        # Load premium roles from file
+        saved_premium_roles = self._load_premium_roles()
+        
+        # Enhanced debugging
+        self.logger.info(f"Checking premium access for user {interaction.user.name} (ID: {interaction.user.id})")
+        self.logger.info(f"User has roles: {', '.join([role.name for role in user_roles])}")
+        self.logger.info(f"Loaded premium roles from file: {saved_premium_roles}")
+        self.logger.info(f"PREMIUM_ROLE_NAMES from config: {PREMIUM_ROLE_NAMES}")
+        
         # Check if user has a premium role
         has_premium = False
         premium_role = None
         
+        # First check against the saved premium roles
         for role in user_roles:
-            if role.name in PREMIUM_ROLE_NAMES:
+            role_id = str(role.id)
+            if role_id in saved_premium_roles:
                 has_premium = True
                 premium_role = role
+                self.logger.info(f"Found premium role match by ID: {role.name} (ID: {role_id})")
                 break
+        
+        # If not found, fallback to checking names against PREMIUM_ROLE_NAMES constant
+        if not has_premium:
+            for role in user_roles:
+                # Trim whitespace for more lenient matching
+                role_name_trimmed = role.name.strip()
+                for premium_name in PREMIUM_ROLE_NAMES:
+                    premium_name_trimmed = premium_name.strip()
+                    if role_name_trimmed.lower() == premium_name_trimmed.lower():
+                        has_premium = True
+                        premium_role = role
+                        self.logger.info(f"Found premium role match by name: {role.name} matched with {premium_name}")
+                        break
+                if has_premium:
+                    break
         
         # If user doesn't have premium, send an error message
         if not has_premium:

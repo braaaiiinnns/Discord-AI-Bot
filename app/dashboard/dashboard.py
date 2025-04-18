@@ -53,7 +53,11 @@ class Dashboard:
             SESSION_TYPE='filesystem',
             SESSION_FILE_DIR=os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'flask_session'),
             PERMANENT_SESSION_LIFETIME=timedelta(days=7),
-            SESSION_PERMANENT=True
+            SESSION_PERMANENT=True,
+            SESSION_USE_SIGNER=True,  # Add signature for security
+            SESSION_COOKIE_SECURE=False,  # Set to True in production with HTTPS
+            SESSION_COOKIE_HTTPONLY=True,
+            SESSION_COOKIE_SAMESITE='Lax'  # Helps with CSRF protection
         )
         
         # Ensure session directory exists

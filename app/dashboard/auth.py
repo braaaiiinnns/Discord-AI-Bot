@@ -13,7 +13,8 @@ logger = logging.getLogger('discord_bot.dashboard.auth')
 # Discord OAuth2 constants
 DISCORD_CLIENT_ID = os.getenv('DISCORD_CLIENT_ID')
 DISCORD_CLIENT_SECRET = os.getenv('DISCORD_CLIENT_SECRET')
-DISCORD_REDIRECT_URI = os.getenv('DISCORD_REDIRECT_URI', 'http://localhost:8050/callback')
+# Keep the redirect URI exactly as provided in the environment variable, preserving the trailing slash
+DISCORD_REDIRECT_URI = os.getenv('DISCORD_REDIRECT_URI', 'http://127.0.0.1:8050/callback/')
 DISCORD_API_ENDPOINT = 'https://discord.com/api/v10'  # Using v10 API endpoint
 
 # OAuth2 endpoints
@@ -161,24 +162,34 @@ class DiscordAuthManager:
             
             return redirect(url_for('index'))
         
+        # Define both routes with and without trailing slash to handle Discord's callback
+        @auth_bp.route('/callback/')
         @auth_bp.route('/callback')
         def callback():
             """Handle the OAuth2 callback from Discord"""
             # Verify state for security
             state = request.args.get('state')
             saved_state = session.get('oauth2_state')
-            logger.debug(f"Callback received with state: {state}, code: {request.args.get('code')}")
-            logger.debug(f"Session state: {saved_state}")
+            logger.info(f"Callback received with state: {state}, saved state: {saved_state}")
+            logger.info(f"Request path: {request.path}, full URL: {request.url}")
+            
+            error = request.args.get('error')
+            if error:
+                logger.error(f"OAuth error returned: {error}, description: {request.args.get('error_description')}")
+                return redirect(url_for('index', error=f"Authentication error: {error}"))
             
             if not state or state != saved_state:
                 logger.warning("OAuth2 state mismatch")
-                return redirect(url_for('auth.login'))
+                return redirect(url_for('index', error="Authentication failed: state mismatch"))
             
             # Exchange authorization code for token
             code = request.args.get('code')
             if not code:
                 logger.warning("No authorization code received from Discord")
-                return redirect(url_for('auth.login'))
+                return redirect(url_for('index', error="Authentication failed: no code provided"))
+            
+            # Clear the state from the session once it's been used
+            session.pop('oauth2_state', None)
             
             # Request access token
             token_data = {
@@ -186,8 +197,10 @@ class DiscordAuthManager:
                 'client_secret': DISCORD_CLIENT_SECRET,
                 'grant_type': 'authorization_code',
                 'code': code,
-                'redirect_uri': DISCORD_REDIRECT_URI
+                'redirect_uri': DISCORD_REDIRECT_URI  # Use exactly what's registered in Discord
             }
+            
+            logger.info(f"Exchanging code for token with redirect_uri: {DISCORD_REDIRECT_URI}")
             
             try:
                 # Using the requests library with timeouts for robustness
@@ -197,22 +210,31 @@ class DiscordAuthManager:
                     timeout=10,
                     headers={'Content-Type': 'application/x-www-form-urlencoded'}
                 )
-                logger.debug(f"Token response status: {token_response.status_code}, body: {token_response.text}")
-                token_response.raise_for_status()
+                
+                # Log the response for debugging
+                logger.info(f"Token exchange response status: {token_response.status_code}")
+                if token_response.status_code != 200:
+                    logger.error(f"Token exchange failed with status {token_response.status_code}: {token_response.text}")
+                    return redirect(url_for('index', error=f"Authentication failed: token exchange error {token_response.status_code}"))
+                
                 token_json = token_response.json()
+                logger.debug(f"Token response: {json.dumps(token_json)}")
                 access_token = token_json.get('access_token')
                 
                 if not access_token:
-                    logger.error("Failed to get access token")
-                    return redirect(url_for('auth.login'))
+                    logger.error("Failed to get access token from response")
+                    return redirect(url_for('index', error="Authentication failed: no access token"))
                 
                 # Fetch user data from Discord
                 user_data = self._fetch_user_data(access_token)
-                guilds_data = self._fetch_user_guilds(access_token)
-                
                 if not user_data:
                     logger.error("Failed to get user data")
-                    return redirect(url_for('auth.login'))
+                    return redirect(url_for('index', error="Authentication failed: could not fetch user data"))
+                
+                logger.info(f"Successfully fetched user data for {user_data.get('username', 'Unknown User')}")
+                
+                # Fetch guilds data
+                guilds_data = self._fetch_user_guilds(access_token)
                 
                 # Create user object
                 user = DashboardUser(
@@ -233,15 +255,17 @@ class DiscordAuthManager:
                 if self.login_callback:
                     self.login_callback(user)
                 
-                logger.info(f"User {user.username} (ID: {user.id}) logged in")
+                logger.info(f"User {user.username} (ID: {user.id}) logged in successfully")
                 
-                # Redirect to next or index
-                next_url = request.args.get('next') or url_for('index')
-                return redirect(next_url)
+                # Redirect to next or index - avoid using request.args.get('next') as it may cause loops
+                return redirect(url_for('index'))
                 
             except requests.RequestException as e:
                 logger.error(f"Error during OAuth2 token exchange: {e}")
-                return redirect(url_for('auth.login'))
+                return redirect(url_for('index', error=f"Authentication failed: {str(e)}"))
+            except Exception as e:
+                logger.error(f"Unexpected error in callback: {e}", exc_info=True)
+                return redirect(url_for('index', error="An unexpected error occurred"))
         
         return auth_bp
     

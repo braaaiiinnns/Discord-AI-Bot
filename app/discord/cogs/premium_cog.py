@@ -10,23 +10,24 @@ from utils.ncrypt import encrypt_data, decrypt_data
 # Confirmation view for admin actions
 class ConfirmView(discord.ui.View):
     """Confirmation view with Yes/No buttons"""
-    def __init__(self, timeout=60):
-        super().__init__(timeout=timeout)
-        self.value = None
     
+    def __init__(self, confirm_callback, cancel_callback=None):
+        super().__init__(timeout=60)  # 1 minute timeout
+        self.confirm_callback = confirm_callback
+        self.cancel_callback = cancel_callback
+        
     @discord.ui.button(label="Yes", style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Confirm button callback"""
-        self.value = True
+        await self.confirm_callback(interaction)
         self.stop()
-        await interaction.response.defer()
-    
+        
     @discord.ui.button(label="No", style=discord.ButtonStyle.red)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Cancel button callback"""
-        self.value = False
+        if self.cancel_callback:
+            await self.cancel_callback(interaction)
+        else:
+            await interaction.response.send_message("Action cancelled.", ephemeral=True)
         self.stop()
-        await interaction.response.defer()
 
 class PremiumRolesCog(commands.Cog):
     """Cog for managing premium roles"""
@@ -38,6 +39,9 @@ class PremiumRolesCog(commands.Cog):
         # Add premium roles storage
         self.premium_roles_file = "data/files/premium_roles.json"
         self.premium_roles = self._load_premium_roles()
+        
+        # Create the premium command group
+        self.premium_group = app_commands.Group(name="premium", description="Premium role management commands")
         
         # Register commands
         self._register_commands()
@@ -55,37 +59,58 @@ class PremiumRolesCog(commands.Cog):
             json.dump(self.premium_roles, file, indent=4)
     
     def _register_commands(self):
-        """Register commands for the cog"""
-        @self.bot.tree.command(name="add_premium_role", description="Add a premium role")
+        """Register commands for the cog using the premium command group"""
+        
+        # Command to add a premium role
+        @self.premium_group.command(name="add_role", description="Add a premium role")
         @app_commands.describe(role="Role to add")
         async def add_premium_role(interaction: discord.Interaction, role: discord.Role):
             """Add a premium role"""
             if role.name in PREMIUM_ROLE_NAMES:
-                self.premium_roles[role.id] = role.name
+                self.premium_roles[str(role.id)] = role.name
                 self._save_premium_roles()
                 await interaction.response.send_message(f"Role {role.name} added as premium role.", ephemeral=True)
+                self.logger.info(f"User {interaction.user} added premium role: {role.name}")
             else:
                 await interaction.response.send_message(f"Role {role.name} is not a valid premium role.", ephemeral=True)
         
-        @self.bot.tree.command(name="remove_premium_role", description="Remove a premium role")
+        # Command to remove a premium role
+        @self.premium_group.command(name="remove_role", description="Remove a premium role")
         @app_commands.describe(role="Role to remove")
         async def remove_premium_role(interaction: discord.Interaction, role: discord.Role):
             """Remove a premium role"""
-            if role.id in self.premium_roles:
-                del self.premium_roles[role.id]
+            role_id = str(role.id)
+            if role_id in self.premium_roles:
+                del self.premium_roles[role_id]
                 self._save_premium_roles()
                 await interaction.response.send_message(f"Role {role.name} removed from premium roles.", ephemeral=True)
+                self.logger.info(f"User {interaction.user} removed premium role: {role.name}")
             else:
                 await interaction.response.send_message(f"Role {role.name} is not a premium role.", ephemeral=True)
         
-        @self.bot.tree.command(name="list_premium_roles", description="List all premium roles")
+        # Command to list all premium roles
+        @self.premium_group.command(name="list_roles", description="List all premium roles")
         async def list_premium_roles(interaction: discord.Interaction):
             """List all premium roles"""
             if self.premium_roles:
-                roles_list = "\n".join([f"{role_id}: {role_name}" for role_id, role_name in self.premium_roles.items()])
-                await interaction.response.send_message(f"Premium roles:\n{roles_list}", ephemeral=True)
+                embed = discord.Embed(
+                    title="Premium Roles",
+                    description="These roles have access to premium features",
+                    color=discord.Color.gold()
+                )
+                
+                for role_id, role_name in self.premium_roles.items():
+                    embed.add_field(name=role_name, value=f"ID: {role_id}", inline=False)
+                
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                self.logger.info(f"User {interaction.user} listed premium roles")
             else:
                 await interaction.response.send_message("No premium roles found.", ephemeral=True)
+    
+    async def cog_load(self):
+        """Register the premium command group with the bot when the cog is loaded"""
+        self.bot.tree.add_command(self.premium_group)
+        self.logger.info("Premium command group registered")
 
 async def setup(bot):
     """Setup function for the cog"""

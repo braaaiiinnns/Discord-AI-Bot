@@ -129,7 +129,7 @@ class GoogleGenAIStrategy(AIClientStrategy):
         
         try:
             # Format messages into a single prompt with clear role indicators
-            formatted_content = f"System: {system_prompt}\n\nYou are Gemini, a helpful, detailed, and informative AI assistant. Provide comprehensive, in-depth responses to user queries.\n\n"
+            formatted_content = f"System: {system_prompt}\n\n"
             
             for message in context:
                 role = message["role"]

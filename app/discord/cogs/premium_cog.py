@@ -4,7 +4,7 @@ from discord.ext import commands
 import os
 import json
 import random
-from config.config import PREMIUM_ROLE_NAMES, ENCRYPTION_KEY
+from config.config import PREMIUM_ROLE_NAMES, ENCRYPTION_KEY, PREMIUM_ROLES_FILE
 from utils.ncrypt import encrypt_data, decrypt_data
 
 # Confirmation view for admin actions
@@ -37,7 +37,7 @@ class PremiumRolesCog(commands.Cog):
         self.logger = logger
         
         # Add premium roles storage
-        self.premium_roles_file = "data/files/premium_roles.json"
+        self.premium_roles_file = PREMIUM_ROLES_FILE
         self.premium_roles = self._load_premium_roles()
         
         # Create the premium command group

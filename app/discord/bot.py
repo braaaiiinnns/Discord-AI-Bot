@@ -7,6 +7,7 @@ import discord
 import logging
 import os
 import asyncio
+import threading
 import datetime
 from discord import app_commands
 from discord.ext import commands
@@ -15,7 +16,8 @@ from config.config import (
     DISCORD_BOT_TOKEN, OPENAI_API_KEY, GOOGLE_GENAI_API_KEY, CLAUDE_API_KEY, 
     GROK_API_KEY, TIMEZONE, MESSAGES_DB_PATH, AI_INTERACTIONS_DB_PATH,
     ENCRYPTION_KEY, ENABLE_MESSAGE_LOGGING, ENABLE_AI_LOGGING,
-    ENABLE_DASHBOARD, DASHBOARD_HOST, DASHBOARD_PORT, DASHBOARD_REQUIRE_LOGIN
+    DASHBOARD_HOST, DASHBOARD_PORT,  # Keep these for API server config
+    LOG_LEVEL, ENABLE_DEBUG_LOGGING, LOG_FILE_PATH
 )
 from utils.logger import setup_logger
 from utils.ai_services import get_openai_client, get_google_genai_client, get_claude_client, get_grok_client
@@ -25,16 +27,29 @@ from app.discord.role_color_manager import RoleColorManager
 from app.discord.task_manager import TaskManager
 from app.discord.message_monitor import MessageMonitor
 from utils.ai_logger import AIInteractionLogger
-from app.discord.cogs import PremiumRolesCog, UserStateCog, ImageGeneration, Dashboard, RoleColorCog, MessageListenersCog
+from app.discord.cogs import PremiumRolesCog, UserStateCog, ImageGeneration, RoleColorCog, MessageListenersCog  # Dashboard removed
 from app.discord.cogs.gen_ai_cog import AICogCommands
+from app.discord.cogs.admin_cog import AdminCog
+from app.api.server import start_server  # Keep API server import
 
 class DiscordBot:
     """Main Discord bot class that initializes and runs the bot"""
     
     def __init__(self):
-        # Setup logging
-        self.logger = setup_logger()
-        self.logger.info("Initializing Discord bot")
+        # Setup logging - use LOG_FILE_PATH from config
+        self.logger = setup_logger(log_file=LOG_FILE_PATH, level=LOG_LEVEL)
+        self.logger.propagate = False
+        self.logger.debug("DiscordBot initializing...")
+        
+        # Configure root logger to prevent duplicate messages
+        root_logger = logging.getLogger()
+        root_logger.handlers = []  # Remove any existing handlers
+        
+        # Disable the discord.py and werkzeug logging handlers to prevent duplication
+        logging.getLogger('discord').propagate = False
+        logging.getLogger('discord').setLevel(logging.ERROR)
+        logging.getLogger('werkzeug').propagate = False
+        logging.getLogger('werkzeug').setLevel(logging.ERROR)
         
         # Configure Discord client
         self.intents = discord.Intents.all()
@@ -55,89 +70,122 @@ class DiscordBot:
         
         # Register setup hook for async initialization
         self.client.setup_hook = self._setup_hook
-    
+        self.logger.debug("DiscordBot initialization complete.")
+
     def _init_logging_services(self):
         """Initialize message monitoring and AI logging services"""
+        self.logger.debug("Initializing logging services...")
         try:
             # Ensure data directory exists
             os.makedirs(os.path.dirname(MESSAGES_DB_PATH), exist_ok=True)
+            self.logger.debug(f"Data directory ensured at {os.path.dirname(MESSAGES_DB_PATH)}")
             
             # Initialize message monitor if enabled
             self.message_monitor = None
             if ENABLE_MESSAGE_LOGGING:
-                self.message_monitor = MessageMonitor(
-                    self.client,
-                    MESSAGES_DB_PATH,
-                    ENCRYPTION_KEY,
-                    vision_api_key=GOOGLE_GENAI_API_KEY  # Pass Gemini API key for image analysis
+                self.logger.debug("Message logging enabled. Initializing MessageMonitor.")
+                from utils.database import UnifiedDatabase
+                # Create a unified database instead of using separate files
+                db = UnifiedDatabase(
+                    db_path=MESSAGES_DB_PATH, 
+                    encryption_key=ENCRYPTION_KEY,
+                    create_tables=True
                 )
-                self.logger.info("Message monitoring service initialized" + 
-                                (" with AI content analysis" if GOOGLE_GENAI_API_KEY else ""))
+                self.message_monitor = MessageMonitor(
+                    db=db,
+                    encryption_key=ENCRYPTION_KEY
+                )
+            else:
+                self.logger.debug("Message logging disabled.")
             
             # Initialize AI logger if enabled
             self.ai_logger = None
             if ENABLE_AI_LOGGING:
-                self.ai_logger = AIInteractionLogger(
-                    AI_INTERACTIONS_DB_PATH,
-                    ENCRYPTION_KEY
-                )
-                self.logger.info("AI interaction logging service initialized")
+                self.logger.debug("AI logging enabled. Initializing AIInteractionLogger.")
+                # Log the encryption key hash for debugging
+                key_hash = hash(ENCRYPTION_KEY)
+                self.logger.debug(f"Using encryption key with hash: {key_hash}")
                 
-            # Initialize dashboard if enabled
-            self.dashboard = None
-            if ENABLE_DASHBOARD and self.message_monitor:
-                # Import the dashboard module here to avoid circular imports
-                from app.dashboard.dashboard import Dashboard
-                self.dashboard = Dashboard(
-                    message_monitor=self.message_monitor,
-                    port=DASHBOARD_PORT,
-                    require_auth=DASHBOARD_REQUIRE_LOGIN,
-                    secret_key=ENCRYPTION_KEY
-                )
-                self.logger.info(f"Dashboard initialized with Discord SSO authentication")
+                # Use the same unified database if message monitor is enabled
+                if self.message_monitor:
+                    self.ai_logger = AIInteractionLogger(
+                        db=self.message_monitor.db,
+                        encryption_key=ENCRYPTION_KEY
+                    )
+                else:
+                    # Create a new database connection if message monitor is disabled
+                    from utils.database import UnifiedDatabase
+                    db = UnifiedDatabase(
+                        db_path=AI_INTERACTIONS_DB_PATH,
+                        encryption_key=ENCRYPTION_KEY,
+                        create_tables=True
+                    )
+                    self.ai_logger = AIInteractionLogger(
+                        db=db,
+                        encryption_key=ENCRYPTION_KEY
+                    )
+            else:
+                self.logger.debug("AI logging disabled.")
+                
+            # Dashboard initialization removed
                 
         except Exception as e:
-            self.logger.error(f"Error initializing logging services: {e}", exc_info=True)
+            self.logger.error(f"Error initializing logging services: {str(e)}")
             # Continue without logging services if they fail to initialize
             self.message_monitor = None
             self.ai_logger = None
-            self.dashboard = None
+        self.logger.debug("Logging services initialization finished.")
         
     def _init_task_infrastructure(self):
         """Initialize task scheduling infrastructure"""
+        self.logger.debug("Initializing task infrastructure...")
         # Initialize the task scheduler with timezone
         self.scheduler = TaskScheduler(self.client, timezone=TIMEZONE)
-        self.logger.info(f"Task scheduler initialized with timezone: {TIMEZONE}")
+        self.logger.debug("TaskScheduler initialized.")
         
         # Initialize the task manager
         self.task_manager = TaskManager(self.client, self.scheduler, self.logger)
+        self.logger.debug("TaskManager initialized.")
         
         # Initialize the role color manager
         self.role_color_manager = RoleColorManager(self.client, self.scheduler)
+        self.logger.debug("RoleColorManager initialized.")
         
         # Register the role color manager with the task manager
         self.task_manager.register_role_color_manager(self.role_color_manager)
-        self.logger.info("Task infrastructure initialized")
+        self.logger.debug("RoleColorManager registered with TaskManager.")
+        self.logger.debug("Task infrastructure initialization complete.")
     
     def _init_ai_clients(self):
         """Initialize AI service clients"""
+        self.logger.debug("Initializing AI clients...")
         self.openai_client = get_openai_client(OPENAI_API_KEY)
+        self.logger.debug("OpenAI client initialized.")
         self.google_client = get_google_genai_client(GOOGLE_GENAI_API_KEY)
+        self.logger.debug("Google GenAI client initialized.")
         self.claude_client = get_claude_client(CLAUDE_API_KEY)
+        self.logger.debug("Claude client initialized.")
         self.grok_client = get_grok_client(GROK_API_KEY)
-        self.logger.info("AI clients initialized")
+        self.logger.debug("Grok client initialized.")
+        self.logger.debug("AI clients initialization complete.")
     
     async def _setup_hook(self):
         """Async setup hook for initializing cogs"""
-        self.logger.info("Loading cogs...")
+        self.logger.debug("Running setup hook...")
         
+        # Set client reference in the message monitor if available
+        if hasattr(self, 'message_monitor') and self.message_monitor:
+            self.message_monitor.set_client(self.client)
+            self.logger.debug("Client reference set in MessageMonitor.")
+            
         # AI Commands Cog
+        self.logger.debug("Initializing AICogCommands...")
         ai_cog = AICogCommands(
             self.client, 
             self.bot_state, 
             self.response_channels, 
             self.logger, 
-            self.ai_logger if hasattr(self, 'ai_logger') and self.ai_logger else None
+            self.message_monitor if hasattr(self, 'message_monitor') and self.message_monitor else None
         )
         ai_cog.setup_clients(
             self.openai_client, 
@@ -146,66 +194,71 @@ class DiscordBot:
             self.grok_client
         )
         await self.client.add_cog(ai_cog)
-        self.logger.info("AI commands cog loaded")
+        self.logger.debug("AICogCommands added.")
         
         # Premium Roles Cog
+        self.logger.debug("Initializing PremiumRolesCog...")
         premium_roles_cog = PremiumRolesCog(
             self.client,
             self.logger
         )
         await self.client.add_cog(premium_roles_cog)
-        self.logger.info("Premium roles cog loaded")
+        self.logger.debug("PremiumRolesCog added.")
         
         # User State Cog
+        self.logger.debug("Initializing UserStateCog...")
         user_state_cog = UserStateCog(
             self.client,
             self.bot_state,
             self.logger
         )
         await self.client.add_cog(user_state_cog)
-        self.logger.info("User state cog loaded")
+        self.logger.debug("UserStateCog added.")
         
         # Image Generation Cog
+        self.logger.debug("Initializing ImageGeneration Cog...")
         image_gen_cog = ImageGeneration(
             self.client,
             self.logger
         )
         image_gen_cog.setup_clients(self.openai_client)
         await self.client.add_cog(image_gen_cog)
-        self.logger.info("Image generation cog loaded")
+        self.logger.debug("ImageGeneration Cog added.")
         
-        # Dashboard Cog
-        dashboard_cog = Dashboard(
-            self.client,
-            self.logger
-        )
-        await self.client.add_cog(dashboard_cog)
-        self.logger.info("Dashboard cog loaded")
+        # Dashboard Cog removed
         
         # Role Color Cog
+        self.logger.debug("Initializing RoleColorCog...")
         role_color_cog = RoleColorCog(
             self.client,
             self.role_color_manager,
             self.logger
         )
         await self.client.add_cog(role_color_cog)
-        self.logger.info("Role color cog loaded")
+        self.logger.debug("RoleColorCog added.")
         
         # Message Listeners Cog
+        self.logger.debug("Initializing MessageListenersCog...")
         message_listeners_cog = MessageListenersCog(
             self.client,
             self.logger
         )
         await self.client.add_cog(message_listeners_cog)
-        self.logger.info("Message listeners cog loaded")
+        self.logger.debug("MessageListenersCog added.")
+
+        # Admin Cog
+        self.logger.debug("Initializing AdminCog...")
+        admin_cog = AdminCog(self)  # Pass the DiscordBot instance (self)
+        await self.client.add_cog(admin_cog)
+        self.logger.debug("AdminCog added.")
         
         # Schedule daily color cycle update
         self._schedule_color_cycle_task(role_color_cog)
-        
-        self.logger.info("All cogs loaded successfully")
+        self.logger.debug("Setup hook finished.")
     
     def _schedule_color_cycle_task(self, role_color_cog):
         """Schedule the daily color cycle task"""
+        self.logger.debug("Scheduling daily color cycle task...")
         # Schedule for early morning (3:00 AM) to not interfere with other tasks
         time = datetime.time(hour=3, minute=0)
         
@@ -219,23 +272,27 @@ class DiscordBot:
         
         # Start the task
         self.scheduler.start_task(task_id)
-        self.logger.info(f"Role color cycle task scheduled with ID: {task_id} at {time} {TIMEZONE}")
+        self.logger.debug(f"Daily color cycle task scheduled with ID: {task_id}")
     
     def run(self):
         """Run the Discord bot"""
         @self.client.event
         async def on_ready():
             self.logger.info(f"Logged in as {self.client.user}")
+            self.logger.debug("on_ready event triggered.")
             
             # Cache response channels
+            self.logger.debug("Finding or creating response channels...")
             await self._find_or_create_response_channels()
+            self.logger.debug("Response channels cached.")
             
             # Register scheduled tasks
+            self.logger.debug("Registering scheduled tasks...")
             self.task_manager.register_tasks(self.tree)
+            self.logger.debug("Scheduled tasks registered.")
             
             # Sync commands with Discord
-            self.logger.info("Syncing commands with Discord...")
-            
+            self.logger.debug("Syncing application commands...")
             # Add retry mechanism for command sync
             max_retries = 3
             retry_count = 0
@@ -245,103 +302,114 @@ class DiscordBot:
                 try:
                     await self.tree.sync()
                     sync_success = True
-                    self.logger.info("Commands synced successfully")
-                    
-                    # Log registered commands
-                    commands = self.tree.get_commands()
-                    command_names = [cmd.name for cmd in commands]
-                    self.logger.info(f"Registered commands: {', '.join(command_names)}")
+                    self.logger.debug("Application commands synced successfully.")
                 except Exception as e:
                     retry_count += 1
-                    self.logger.error(f"Failed to sync commands (attempt {retry_count}/{max_retries}): {e}", exc_info=True)
+                    self.logger.error(f"Failed to sync commands (attempt {retry_count}/{max_retries}): {str(e)}")
                     await asyncio.sleep(2)  # Wait before retrying
             
             if not sync_success:
                 self.logger.warning("Could not sync commands after multiple attempts. Bot will use cached commands.")
             
             # Start scheduled tasks
+            self.logger.debug("Starting scheduled tasks...")
             self.task_manager.start_tasks()
-            self.logger.info("Scheduled tasks started")
+            self.logger.debug("Scheduled tasks started.")
             
-            # Start dashboard if enabled
-            if self.dashboard:
-                dashboard_url = self.dashboard.start()
-                self.logger.info(f"Dashboard started at {dashboard_url}")
+            # Dashboard startup removed
+            
+            # Start the API server in a separate thread
+            self.logger.debug("Starting API server...")
+            if not self.message_monitor:
+                self.logger.warning("Message monitor is not available. Some API data endpoints might fail.")
+                
+            api_thread = threading.Thread(
+                target=start_server, 
+                kwargs={
+                    'bot_instance': self,  # Pass bot_instance instead of message_monitor
+                    'host': DASHBOARD_HOST,
+                    'port': DASHBOARD_PORT
+                },
+                daemon=True
+            )
+            api_thread.start()
+            self.logger.info(f"API server started at {DASHBOARD_HOST}:{DASHBOARD_PORT}")
+            
+            self.logger.debug("on_ready event finished.")
         
-        # Register message monitoring events if enabled
+        @self.client.event
+        async def on_message(message):
+            self.logger.debug(f"Received message from {message.author}: {message.content[:50]}...")
+            try:
+                # Process message through the message monitor if enabled
+                if self.message_monitor:
+                    self.logger.debug(f"Processing message {message.id} with MessageMonitor.")
+                    await self.message_monitor.process_message(message)
+                
+                # Process commands - this is required for the bot to respond to commands
+                self.logger.debug(f"Processing commands for message {message.id}.")
+                await self.client.process_commands(message)
+            except Exception as e:
+                self.logger.error(f"Error processing message event for message {message.id}: {str(e)}")
+        
+        # Register other message-related events if message monitoring is enabled
         if self.message_monitor:
             @self.client.event
-            async def on_message(message):
-                try:
-                    # Don't process messages from the bot itself
-                    if message.author == self.client.user:
-                        return
-                    
-                    # Log the message
-                    await self.message_monitor.process_message(message)
-                    
-                    # Process commands (important for cogs to receive messages)
-                    await self.client.process_commands(message)
-                except Exception as e:
-                    self.logger.error(f"Error processing message event: {e}", exc_info=True)
-            
-            @self.client.event
-            async def on_message_delete(message):
-                try:
-                    await self.message_monitor.process_message_delete(message)
-                except Exception as e:
-                    self.logger.error(f"Error processing message delete event: {e}", exc_info=True)
-            
-            @self.client.event
             async def on_message_edit(before, after):
+                self.logger.debug(f"Received message edit event for message {after.id}.")
                 try:
                     await self.message_monitor.process_message_edit(before, after)
                 except Exception as e:
-                    self.logger.error(f"Error processing message edit event: {e}", exc_info=True)
+                    self.logger.error(f"Error processing message edit event for message {after.id}: {str(e)}")
         
         # Run the client
-        self.logger.info("Starting Discord bot")
+        self.logger.info("Starting bot client...")
         self.client.run(DISCORD_BOT_TOKEN)
     
     async def _find_or_create_response_channels(self):
         """Find or create the response channel in all guilds"""
+        self.logger.debug("Executing _find_or_create_response_channels...")
         for guild in self.client.guilds:
-            self.logger.info(f"Finding/creating response channel in {guild.name}")
-            
+            self.logger.debug(f"Processing guild: {guild.name} ({guild.id})")
             # Try to find the "🤖" channel
             response_channel = discord.utils.get(guild.text_channels, name="🤖")
             
             # Create the channel if it doesn't exist
             if not response_channel:
+                self.logger.debug(f"Response channel '🤖' not found in {guild.name}. Creating...")
                 try:
                     response_channel = await guild.create_text_channel("🤖")
-                    self.logger.info(f"Created response channel in {guild.name}")
+                    self.logger.debug(f"Response channel created in {guild.name}: {response_channel.id}")
                 except Exception as e:
-                    self.logger.error(f"Failed to create response channel in {guild.name}: {e}", exc_info=True)
+                    self.logger.error(f"Failed to create response channel in {guild.name}: {str(e)}")
                     continue
+            else:
+                self.logger.debug(f"Found response channel '🤖' in {guild.name}: {response_channel.id}")
             
             # Cache the channel
             self.response_channels[guild.id] = response_channel
-            self.logger.info(f"Response channel cached for {guild.name}: {response_channel.name} (ID: {response_channel.id})")
+            self.logger.debug(f"Cached response channel for guild {guild.id}.")
+        self.logger.debug("_find_or_create_response_channels finished.")
 
     def cleanup(self):
         """Clean up resources before shutting down"""
+        self.logger.info("Performing cleanup...")
         try:
-            # Stop the dashboard if it's running
-            if hasattr(self, 'dashboard') and self.dashboard:
-                self.dashboard.stop()
-                self.logger.info("Dashboard stopped")
+            # Dashboard cleanup removed
             
             # Close database connections
             if hasattr(self, 'message_monitor') and self.message_monitor:
+                self.logger.debug("Closing MessageMonitor database connection...")
                 self.message_monitor.close()
-                self.logger.info("Message monitor closed")
+                self.logger.debug("MessageMonitor database connection closed.")
                 
             if hasattr(self, 'ai_logger') and self.ai_logger:
+                self.logger.debug("Closing AIInteractionLogger database connection...")
                 self.ai_logger.close()
-                self.logger.info("AI logger closed")
+                self.logger.debug("AIInteractionLogger database connection closed.")
             
             # Clean up AI clients
+            self.logger.debug("Cleaning up AI clients...")
             if hasattr(self, 'openai_client'):
                 self.openai_client = None
             if hasattr(self, 'google_client'):
@@ -350,12 +418,20 @@ class DiscordBot:
                 self.claude_client = None
             if hasattr(self, 'grok_client'):
                 self.grok_client = None
-            self.logger.info("AI clients cleaned up")
+            self.logger.debug("AI clients cleaned up.")
             
             # Clean up task scheduler
-            if hasattr(self, 'task_scheduler') and self.task_scheduler:
-                self.task_scheduler.stop()
-                self.logger.info("Task scheduler stopped")
+            if hasattr(self, 'scheduler') and self.scheduler:
+                self.logger.debug("Stopping TaskScheduler...")
+                self.scheduler.stop_all()  # Corrected method name
+                self.logger.debug("TaskScheduler stopped.")
                 
         except Exception as e:
-            self.logger.error(f"Error during cleanup: {e}", exc_info=True)
+            self.logger.error(f"Error during cleanup: {str(e)}")
+        self.logger.info("Cleanup finished.")
+
+    def toggle_debug_logging(self, enable: bool):
+        """Dynamically toggle debug logging."""
+        new_level = logging.DEBUG if enable else logging.WARNING
+        self.logger.setLevel(new_level)
+        self.logger.info(f"Debug logging {'enabled' if enable else 'disabled'}.")

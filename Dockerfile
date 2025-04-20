@@ -21,5 +21,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Explicitly install pytz to ensure it's available
 RUN pip install --no-cache-dir pytz
 
+# Create directories for data persistence
+RUN mkdir -p /app/data/db /app/data/files /app/data/static /app/data/flask_session /app/logs && \
+    chmod -R 755 /app/data /app/logs
+
 # Run the bot
 CMD ["python", "main.py"]

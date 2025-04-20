@@ -8,8 +8,21 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GOOGLE_GENAI_API_KEY=${GOOGLE_GENAI_API_KEY}
       - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - GROK_API_KEY=${GROK_API_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - API_SECRET_KEY=${API_SECRET_KEY}
+      - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
+      - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET}
     volumes:
-      - .:/app
-      - ./data:/app/data
-      # Only mount the data directory instead of the entire project
-      # This ensures Python packages installed in the container aren't overwritten
+      # Use named volumes for persistent data
+      - discord_bot_data:/app/data
+      - discord_bot_logs:/app/logs
+    ports:
+      - "${DASHBOARD_PORT:-8050}:8050"
+
+# Define named volumes for data persistence
+volumes:
+  discord_bot_data:
+    driver: local
+  discord_bot_logs:
+    driver: local

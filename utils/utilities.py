@@ -4,7 +4,15 @@ import discord
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-from app.discord.random_ascii_emoji import get_random_emoji
+try:
+    from app.discord.random_ascii_emoji import RandomAsciiEmoji
+    # Initialize the RandomAsciiEmoji class with the logger
+    _emoji_generator = RandomAsciiEmoji(logging.getLogger('discord_bot'))
+    def get_random_emoji():
+        return _emoji_generator.get_random_emoji()
+except ImportError:
+    def get_random_emoji():
+        return "❓"  # Fallback emoji in case of import error
 from config.config import REQUEST_COUNT_FILE, RESET_HOURS
 
 logger = logging.getLogger('discord_bot')
@@ -99,6 +107,10 @@ async def route_response(
 ):
     """Route response to user and optionally to a dedicated channel"""
     try:
+        # Add detailed logging
+        logger.debug(f"Routing response with length: {len(result)}")
+        logger.debug(f"Summary present: {summary is not None}")
+        
         # Validate that response_channels is a dictionary
         if not isinstance(response_channels, dict):
             logger.error("Invalid response_channels parameter. Expected a dictionary.")
@@ -107,8 +119,9 @@ async def route_response(
 
         guild = interaction.guild
         if not guild:
-            logger.warning("Interaction does not belong to a guild. Returning full response to the user.")
-            chunks = split_message(f"**Prompt:** {prompt}\n**Full Response:** {result}", limit=2000)
+            # Interaction does not belong to a guild, return full response to user
+            logger.debug("No guild found, sending full response to DM")
+            chunks = split_message(f"✉️: {prompt}\n📫: {result}", limit=2000)
             for chunk in chunks:
                 await interaction.followup.send(chunk)
             return
@@ -120,15 +133,18 @@ async def route_response(
             await interaction.followup.send("The response channel could not be found.")
             return
 
-        # If the response is within the summary limit, send it directly to the user
+        # Use emoji format for all responses, whether they have a summary or not
         if not summary:
-            logger.info("Response is within the summary limit. Sending directly to the user.")
-            chunks = split_message(f"**Prompt:** {prompt}\n**Full Response:** {result}", limit=2000)
+            # If no summary exists, send the full response to the user with emoji format
+            logger.debug(f"No summary needed, using emoji format for direct response")
+            chunks = split_message(f"✉️: {prompt}\n📫: {result}", limit=2000)
             for chunk in chunks:
                 await interaction.followup.send(chunk)
+            logger.debug("Response sent to user directly (no summary)")
             return  # Skip sending to the response channel
 
         # If a summary exists, send the summary to the user
+        logger.debug(f"Sending summary to user and full response to channel")
         await interaction.followup.send(f"✉️: {prompt}\n📫: {summary}")
 
         # Append a random emoji to the full response for the response channel
@@ -136,7 +152,7 @@ async def route_response(
         chunks = split_message(f"✉️: {prompt}\n📫: {result}\n\n{emoji}", limit=2000)
         for chunk in chunks:
             await response_channel.send(chunk)
-        logger.info("Full response sent to response channel with emoji buffer.")
+        logger.debug(f"Full response sent to channel {response_channel.name}")
     except Exception as e:
-        logger.error(f"Error while routing response: {e}", exc_info=True)
-        await interaction.followup.send("An error occurred while routing the response.")
+        logger.error(f"Error routing response: {str(e)}")
+        await interaction.followup.send("An error occurred while routing your response.")

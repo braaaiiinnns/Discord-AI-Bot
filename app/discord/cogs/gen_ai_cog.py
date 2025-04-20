@@ -2,19 +2,24 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import time
+# Add imports for Optional and Dict
+from typing import Optional, Dict 
+import logging # Import logging
 from utils.ai_services import OpenAIStrategy, GoogleGenAIStrategy, ClaudeStrategy, GrokStrategy
 from config.config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, GROK_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT
 from utils.utilities import route_response
+from app.discord.state import BotState # Import BotState
+from app.discord.message_monitor import MessageMonitor # Import MessageMonitor
 
 class AICogCommands(commands.Cog):
     """Cog for AI-related commands"""
     
-    def __init__(self, bot, bot_state, response_channels, logger, ai_logger=None):
+    def __init__(self, bot, bot_state, response_channels, logger, message_monitor=None):
         self.bot = bot
         self.bot_state = bot_state
         self.response_channels = response_channels
         self.logger = logger
-        self.ai_logger = ai_logger
+        self.message_monitor = message_monitor
         
         # AI clients
         self.openai_client = None
@@ -37,7 +42,6 @@ class AICogCommands(commands.Cog):
         
         # Add the group to the command tree
         self.bot.tree.add_command(self.ask_group)
-        self.logger.info("Registered AI commands group")
     
     def _register_ask_commands(self):
         """Register AI commands in the ask command group"""
@@ -90,7 +94,6 @@ class AICogCommands(commands.Cog):
     @commands.command(name="ask", description="Ask Google GenAI a question")
     async def text_ask_google(self, ctx, *, question: str):
         """Ask a question to Google GenAI (text command)"""
-        self.logger.info(f"Text command: User {ctx.author} used !ask: {question}")
         fake_interaction = await self._create_context_interaction(ctx)
         await self._handle_ai_request(
             fake_interaction,
@@ -155,20 +158,20 @@ class AICogCommands(commands.Cog):
         """Handle an AI model request"""
         self.logger.info(f"Handling {model_name} request from user {interaction.user}: {prompt}")
         
+        # Defer the response immediately to avoid timeout
+        await interaction.response.defer()
+        
         # Get user state and update context
         uid = str(interaction.user.id)
         user_state = self.bot_state.get_user_state(uid)
         user_state.add_prompt("user", prompt)
         context = user_state.get_context()
         
-        await interaction.response.defer()
-        
         try:
             # Record start time for performance tracking
             start_time = time.time()
             
             # Generate response using the appropriate strategy
-            self.logger.info(f"Generating response using {model_name}...")
             result = await strategy.generate_response(context, system_prompt)
             
             # Calculate execution time
@@ -177,29 +180,23 @@ class AICogCommands(commands.Cog):
             # Update user state with the assistant's response
             user_state.add_prompt("assistant", result)
             
-            # Log the AI interaction if logger is available
-            if self.ai_logger:
-                guild_id = interaction.guild.id if interaction.guild else "DM"
-                await self.ai_logger.log_interaction(
-                    user_id=uid,
-                    guild_id=guild_id,
-                    channel_id=interaction.channel_id,
-                    model=model_name,
-                    prompt=prompt,
-                    response=result,
-                    execution_time=execution_time,
-                    metadata={
-                        "system_prompt": system_prompt,
-                        "context_length": len(context),
-                        "channel_name": interaction.channel.name if hasattr(interaction.channel, "name") else "DM",
-                        "user_name": f"{interaction.user.name}#{interaction.user.discriminator}" if hasattr(interaction.user, "discriminator") else interaction.user.name
-                    }
-                )
+            # Log the AI interaction if message_monitor is available
+            await self._log_ai_interaction(
+                interaction,
+                model_name,
+                prompt,
+                result,
+                metadata={
+                    "system_prompt": system_prompt,
+                    "context_length": len(context),
+                    "channel_name": interaction.channel.name if hasattr(interaction.channel, "name") else "DM",
+                    "user_name": f"{interaction.user.name}#{interaction.user.discriminator}" if hasattr(interaction.user, "discriminator") else interaction.user.name
+                }
+            )
             
             # Determine if summarization is needed
             summary = None
             if len(result) > DEFAULT_SUMMARY_LIMIT:
-                self.logger.info(f"Response exceeds {DEFAULT_SUMMARY_LIMIT} characters. Summarizing...")
                 summary = await self._summarize_response(result)
             
             # Route the response
@@ -215,9 +212,32 @@ class AICogCommands(commands.Cog):
             self.logger.error(f"Error in {model_name} response generation: {e}", exc_info=True)
             await interaction.followup.send("An error occurred while processing your request. Please try again later.")
     
+    async def _log_ai_interaction(self, interaction: discord.Interaction, model: str, prompt: str, response: str, metadata: Optional[Dict] = None):
+        """Log AI interaction details to the database via MessageMonitor."""
+        # Use message_monitor if available
+        if self.message_monitor:
+            try:
+                interaction_data = {
+                    'user_id': str(interaction.user.id),
+                    'user_name': interaction.user.name,
+                    'guild_id': str(interaction.guild.id) if interaction.guild else '0',
+                    'channel_id': str(interaction.channel.id) if interaction.channel else '0',
+                    'model': model,
+                    'prompt': prompt,
+                    'response': response,
+                    'metadata': metadata or {}
+                    # timestamp and interaction_id are added by store_ai_interaction
+                }
+                # Use store_ai_interaction which exists in MessageMonitor
+                await self.message_monitor.store_ai_interaction(interaction_data)
+                self.logger.debug(f"AI interaction logged for user {interaction.user.name} using {model}")
+            except Exception as e:
+                self.logger.error(f"Failed to log AI interaction: {e}", exc_info=True)
+        else:
+            self.logger.warning("Message monitor not available, skipping AI interaction logging.")
+    
     async def _summarize_response(self, response: str) -> str:
         """Summarize a response using Google GenAI"""
-        self.logger.info("Summarizing response...")
         summary_prompt = f"Summarize the following text to less than {DEFAULT_SUMMARY_LIMIT} characters:\n\n{response}"
         
         try:

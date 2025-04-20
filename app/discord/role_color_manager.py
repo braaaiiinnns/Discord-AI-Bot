@@ -5,42 +5,80 @@ import datetime
 import json
 import os
 import math
-from config.config import COLOR_CHANGE_ROLE_NAMES, COLOR_CHANGE_HOUR, COLOR_CHANGE_MINUTE, TIMEZONE
+from config.config import COLOR_CHANGE_ROLE_NAMES, COLOR_CHANGE_HOUR, COLOR_CHANGE_MINUTE, TIMEZONE, PREVIOUS_ROLE_COLORS_FILE, ROLE_COLOR_CYCLES_FILE
 from app.discord.task_scheduler import TaskScheduler
 
 logger = logging.getLogger('discord_bot')
 
-# File to store previous colors
-PREVIOUS_COLORS_FILE = 'previous_role_colors.json'
-
 class RoleColorManager:
-    """Manages role color changes using the generic TaskScheduler"""
+    """Manages dynamic color changes for Discord roles"""
     
-    def __init__(self, client, scheduler: TaskScheduler):
+    def __init__(self, client=None, scheduler=None, logger=None):
         self.client = client
         self.scheduler = scheduler
-        self.color_change_task_id = None
-        self.previous_colors = {}
-        self.current_day_colors = {}  # Track colors used on the current day
-        self.load_previous_colors()
+        self.logger = logger or logging.getLogger(__name__)
+        self.config_file = ROLE_COLOR_CYCLES_FILE
+        self.previous_colors_file = PREVIOUS_ROLE_COLORS_FILE
+        self.current_day_colors = {}
+        
+        # Load configuration with fallback to default
+        self.role_configs = self.load_config()
+        
+        # Load previously stored colors if available
+        self.previous_colors = self.load_previous_colors()
+        
+        # Dictionary to store color history for each role
+        # Format: {color_key: [(r,g,b), (r,g,b), (r,g,b)]}
+        self.color_history = {}
+    
+    def load_config(self):
+        """Load role color configuration"""
+        # Currently not used, but allows for future customization
+        return {}
     
     def load_previous_colors(self):
         """Load previous role colors from file"""
-        if os.path.exists(PREVIOUS_COLORS_FILE):
+        if os.path.exists(self.previous_colors_file):
             try:
-                with open(PREVIOUS_COLORS_FILE, 'r') as f:
-                    self.previous_colors = json.load(f)
-                logger.info(f"Loaded previous colors from {PREVIOUS_COLORS_FILE}")
+                with open(self.previous_colors_file, 'r') as f:
+                    data = json.load(f)
+                    
+                    # Check if we have the new format with color history
+                    if data is not None and 'colors' in data and 'history' in data:
+                        self.previous_colors = data['colors']
+                        self.color_history = data['history']
+                    else:
+                        # Old format, just colors
+                        self.previous_colors = data if data is not None else {}
+                        # Initialize color history with just the most recent color
+                        for color_key, color in self.previous_colors.items():
+                            self.color_history[color_key] = [color]
+                            
+                logger.info(f"Loaded previous colors from {self.previous_colors_file}")
+                return self.previous_colors
             except Exception as e:
                 logger.error(f"Error loading previous colors: {e}", exc_info=True)
                 self.previous_colors = {}
+                self.color_history = {}
+                return {}
+        else:
+            # File doesn't exist yet
+            self.previous_colors = {}
+            self.color_history = {}
+            return {}
     
     def save_previous_colors(self):
         """Save previous role colors to file"""
         try:
-            with open(PREVIOUS_COLORS_FILE, 'w') as f:
-                json.dump(self.previous_colors, f)
-            logger.info(f"Saved previous colors to {PREVIOUS_COLORS_FILE}")
+            # Save both the current colors and the history
+            data = {
+                'colors': self.previous_colors,
+                'history': self.color_history
+            }
+            
+            with open(self.previous_colors_file, 'w') as f:
+                json.dump(data, f)
+            logger.info(f"Saved previous colors to {self.previous_colors_file}")
         except Exception as e:
             logger.error(f"Error saving previous colors: {e}", exc_info=True)
     
@@ -88,16 +126,24 @@ class RoleColorManager:
         # Normalize to 0-100 scale
         return min(100, distance * 100 / 442)  # 442 is max possible weighted distance
     
-    def is_color_distinct(self, new_color, previous_color, other_colors, min_prev_distance=40, min_other_distance=30):
+    def is_color_distinct(self, new_color, previous_colors, other_colors, min_prev_distance=40, min_other_distance=30):
         """
-        Check if a color is distinct from both the previous color and other current colors.
+        Check if a color is distinct from both the previous colors and other current colors.
         Returns True if the color is sufficiently different from all reference colors.
+        
+        Args:
+            new_color: The new color to check
+            previous_colors: List of previous colors for this role
+            other_colors: List of colors being used by other roles today
+            min_prev_distance: Minimum distance from previous colors
+            min_other_distance: Minimum distance from other current colors
         """
-        # Check distance from previous color
-        if previous_color:
-            prev_distance = self.color_distance(new_color, previous_color)
-            if prev_distance < min_prev_distance:
-                return False
+        # Check distance from previous colors
+        if previous_colors:
+            for prev_color in previous_colors:
+                prev_distance = self.color_distance(new_color, prev_color)
+                if prev_distance < min_prev_distance:
+                    return False
         
         # Check distance from other colors being used today
         for other_color in other_colors:
@@ -110,14 +156,18 @@ class RoleColorManager:
     def generate_distinct_color(self, guild_id, role_id, role_index, total_roles):
         """
         Generate a color that is distinctly different from:
-        1. The previous color for this role
+        1. The last 3 colors used for this role
         2. Colors assigned to other roles today
         
         Uses color theory and predefined palettes to ensure visual distinction.
         """
         color_key = f"{guild_id}_{role_id}"
-        previous_rgb = self.previous_colors.get(color_key)
         
+        # Get up to the last 3 colors used for this role
+        previous_colors = self.color_history.get(color_key, [])
+        if len(previous_colors) > 3:
+            previous_colors = previous_colors[-3:]  # Only consider the most recent 3 colors
+            
         # Get colors already assigned to other roles in this update cycle
         other_colors_today = list(self.current_day_colors.values())
         
@@ -156,8 +206,8 @@ class RoleColorManager:
                 max(0, min(255, base_color[2] + random.randint(-variation, variation)))
             )
             
-            # Verify it's distinct enough
-            if self.is_color_distinct(new_color, previous_rgb, other_colors_today):
+            # Verify it's distinct enough from previous colors and other roles' colors
+            if self.is_color_distinct(new_color, previous_colors, other_colors_today):
                 return new_color
         
         # If we have more roles than palette colors or the palette color wasn't distinct enough,
@@ -168,9 +218,9 @@ class RoleColorManager:
             # Randomly choose between approaches
             approach = random.randint(1, 3)
             
-            if approach == 1 and previous_rgb:
-                # Complementary color approach
-                r, g, b = previous_rgb
+            if approach == 1 and previous_colors:
+                # Complementary color approach - use the complement of the most recent color
+                r, g, b = previous_colors[-1] if previous_colors else (128, 128, 128)
                 new_color = (255 - r, 255 - g, 255 - b)
             elif approach == 2:
                 # Pick from predefined distinct colors
@@ -192,8 +242,8 @@ class RoleColorManager:
                 )
             
             # Check if the new color is sufficiently different from both
-            # the previous color for this role and other roles' colors today
-            if self.is_color_distinct(new_color, previous_rgb, other_colors_today):
+            # the previous colors for this role and other roles' colors today
+            if self.is_color_distinct(new_color, previous_colors, other_colors_today):
                 return new_color
         
         # If we still haven't found a distinct color, use a fallback approach:
@@ -206,8 +256,8 @@ class RoleColorManager:
             # Calculate minimum distance to any existing color
             min_distance = 100  # Start with maximum possible
             
-            if previous_rgb:
-                prev_distance = self.color_distance(color, previous_rgb)
+            for prev_color in previous_colors:
+                prev_distance = self.color_distance(color, prev_color)
                 min_distance = min(min_distance, prev_distance)
             
             for other_color in other_colors_today:
@@ -280,6 +330,11 @@ class RoleColorManager:
                 await role.edit(color=discord_color)
                 logger.info(f"Changed role '{role.name}' color to {rgb_color} in guild '{guild.name}'")
                 
+                # Update color history for this role
+                if color_key not in self.color_history:
+                    self.color_history[color_key] = []
+                self.color_history[color_key].append(rgb_color)
+                
                 # Store the new color as the previous color for next time
                 self.previous_colors[color_key] = rgb_color
             except Exception as e:
@@ -342,6 +397,11 @@ class RoleColorManager:
             # Update the role color
             await role.edit(color=discord_color)
             logger.info(f"Changed role '{role.name}' color to {rgb_color} in guild '{guild.name}'")
+            
+            # Update color history for this role
+            if color_key not in self.color_history:
+                self.color_history[color_key] = []
+            self.color_history[color_key].append(rgb_color)
             
             # Store the new color as the previous color for next time
             self.previous_colors[color_key] = rgb_color

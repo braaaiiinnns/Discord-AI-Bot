@@ -7,6 +7,7 @@ import re
 import random
 from typing import Dict, List, Callable, Optional, Union, Any, Pattern, Literal
 import asyncio
+from config.config import MESSAGE_LISTENERS_FILE
 
 class MessageListener:
     """
@@ -612,7 +613,7 @@ class MessageListenersCog(commands.Cog):
         self.bot = bot
         self.logger = logger
         self.listeners: List[MessageListener] = []
-        self.listeners_file = "data/files/message_listeners.json"
+        self.listeners_file = MESSAGE_LISTENERS_FILE
         self.custom_actions: Dict[str, Callable] = {}
         
         # Create the listener command group

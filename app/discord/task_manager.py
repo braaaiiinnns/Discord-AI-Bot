@@ -7,12 +7,10 @@ import datetime
 from discord import app_commands
 from app.discord.task_scheduler import TaskScheduler, ScheduleType
 from app.discord.role_color_manager import RoleColorManager
+from config.config import TASKS_FILE
 
 class TaskManager:
     """Centralized manager for all scheduled tasks in the Discord bot."""
-    
-    # Path to the tasks.json file - Fixing path to use correct config directory
-    TASKS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', 'tasks.json')
     
     def __init__(self, client: discord.Client, scheduler: TaskScheduler, logger: logging.Logger):
         self.client = client
@@ -20,14 +18,15 @@ class TaskManager:
         self.logger = logger
         self.task_ids = []  # Keep track of registered task IDs
         self.role_color_manager = None
+        self.tasks_file = TASKS_FILE
         self.tasks_data = self._load_tasks()
         self.callback_registry = {}  # Registry mapping callback names to actual functions
         
     def _load_tasks(self) -> dict:
         """Load tasks from the JSON file, with support for comments."""
         try:
-            if os.path.exists(self.TASKS_FILE):
-                with open(self.TASKS_FILE, 'r') as f:
+            if os.path.exists(self.tasks_file):
+                with open(self.tasks_file, 'r') as f:
                     content = f.read()
                     # Remove JavaScript-style comments (both // and /* */)
                     import re
@@ -48,7 +47,7 @@ class TaskManager:
                             self.logger.error(f"Error parsing with json5: {e2}")
                             raise e  # Re-raise the original error
             else:
-                self.logger.warning(f"Tasks file not found at {self.TASKS_FILE}. Creating a new one.")
+                self.logger.warning(f"Tasks file not found at {self.tasks_file}. Creating a new one.")
                 default_data = {"tasks": []}
                 self._save_tasks(default_data)
                 return default_data
@@ -62,7 +61,7 @@ class TaskManager:
             if tasks_data is None:
                 tasks_data = self.tasks_data
                 
-            with open(self.TASKS_FILE, 'w') as f:
+            with open(self.tasks_file, 'w') as f:
                 json.dump(tasks_data, f, indent=2)
             return True
         except Exception as e:
@@ -94,6 +93,21 @@ class TaskManager:
             
         # Register the daily announcement function
         self.register_callback("send_daily_announcement", self.send_daily_announcement)
+    
+    async def example_interval_task(self):
+        """Example task that runs on a schedule."""
+        self.logger.info("Running example interval task")
+        try:
+            # This is just a placeholder implementation
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.logger.info(f"Example task executed at {current_time}")
+            
+            # You could add actual functionality here, like:
+            # - Sending a message to a specific channel
+            # - Performing routine maintenance operations
+            # - Fetching data from an external API
+        except Exception as e:
+            self.logger.error(f"Error in example interval task: {e}", exc_info=True)
     
     def register_callback(self, name: str, callback_function):
         """Register a callback function with a name that can be referenced in the JSON."""
@@ -190,11 +204,7 @@ class TaskManager:
                     self.logger.info(f"Task {task_id} is already running or doesn't exist")
             except Exception as e:
                 self.logger.error(f"Error starting task {task_id}: {e}", exc_info=True)
-    
-    async def example_interval_task(self):
-        """An example task that runs at an interval."""
-        self.logger.info("Running example interval task")
-        # This is just a placeholder method
+
     
     async def send_daily_announcement(self):
         """Sends a daily announcement to all servers."""

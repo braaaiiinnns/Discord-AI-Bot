@@ -6,7 +6,7 @@ import logging
 import json
 import os
 from typing import List, Optional
-from config.config import COLOR_CHANGE_ROLE_NAMES, PREMIUM_ROLE_NAMES
+from config.config import COLOR_CHANGE_ROLE_NAMES, PREMIUM_ROLE_NAMES, ROLE_COLOR_CYCLES_FILE, PREMIUM_ROLES_FILE
 
 class RoleColorCog(commands.Cog):
     """Cog for managing role colors with a color picker"""
@@ -16,13 +16,11 @@ class RoleColorCog(commands.Cog):
         self.role_color_manager = role_color_manager
         self.logger = logger
         
-        # Store color cycle preferences
-        self.color_cycles = {}
-        self.color_cycle_file = "data/files/role_color_cycles.json"
-        self.load_color_cycles()
+        self.role_color_cycles_file = ROLE_COLOR_CYCLES_FILE
+        self.premium_roles_file = PREMIUM_ROLES_FILE
+        self.role_color_cycles = {}
         
-        # Path to premium roles file
-        self.premium_roles_file = "data/files/premium_roles.json"
+        self.load_color_cycles()
         
         # Create command group
         self.color_group = app_commands.Group(name="color", description="Manage your role color")
@@ -310,14 +308,14 @@ class RoleColorCog(commands.Cog):
     def load_color_cycles(self):
         """Load saved color cycles from file"""
         try:
-            if os.path.exists(self.color_cycle_file):
-                with open(self.color_cycle_file, "r") as f:
+            if os.path.exists(self.role_color_cycles_file):
+                with open(self.role_color_cycles_file, "r") as f:
                     self.color_cycles = json.load(f)
-                self.logger.info(f"Loaded color cycles from {self.color_cycle_file}")
+                self.logger.info(f"Loaded color cycles from {self.role_color_cycles_file}")
             else:
                 self.color_cycles = {}
                 # Ensure directory exists
-                os.makedirs(os.path.dirname(self.color_cycle_file), exist_ok=True)
+                os.makedirs(os.path.dirname(self.role_color_cycles_file), exist_ok=True)
                 self.save_color_cycles()
         except Exception as e:
             self.logger.error(f"Error loading color cycles: {e}", exc_info=True)
@@ -326,9 +324,9 @@ class RoleColorCog(commands.Cog):
     def save_color_cycles(self):
         """Save color cycles to file"""
         try:
-            with open(self.color_cycle_file, "w") as f:
+            with open(self.role_color_cycles_file, "w") as f:
                 json.dump(self.color_cycles, f)
-            self.logger.info(f"Saved color cycles to {self.color_cycle_file}")
+            self.logger.info(f"Saved color cycles to {self.role_color_cycles_file}")
         except Exception as e:
             self.logger.error(f"Error saving color cycles: {e}", exc_info=True)
     

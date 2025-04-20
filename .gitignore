@@ -35,5 +35,5 @@ logs/*.log
 
 # JSON files (except specific ones)
 *.json
-!config/tasks.json
-!data/files/ascii_emoji.json
+!data/static/task_examples.json
+!data/static/ascii_emoji.json

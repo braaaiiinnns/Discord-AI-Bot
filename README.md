@@ -61,3 +61,41 @@ chatgpt_discord_bot/                # Project root
 1. Install requirements: `pip install -r requirements.txt`
 2. Configure your .env file with necessary credentials
 3. Run the bot: `python -m app.main`
+
+## Docker Deployment
+The bot can be easily deployed using Docker for better isolation and persistence:
+
+1. Make sure Docker and Docker Compose are installed on your system
+2. Configure your `.env` file with all the necessary credentials:
+   ```
+   DISCORD_BOT_TOKEN=your_discord_bot_token
+   OPENAI_API_KEY=your_openai_api_key
+   GOOGLE_GENAI_API_KEY=your_google_api_key
+   CLAUDE_API_KEY=your_claude_api_key
+   GROK_API_KEY=your_grok_api_key
+   ENCRYPTION_KEY=your_encryption_key
+   API_SECRET_KEY=your_api_secret_key
+   DISCORD_CLIENT_ID=your_discord_client_id
+   DISCORD_CLIENT_SECRET=your_discord_client_secret
+   DASHBOARD_PORT=8050  # Optional, defaults to 8050
+   ```
+3. Build and start the Docker container:
+   ```bash
+   docker-compose up -d --build
+   ```
+4. To view the logs:
+   ```bash
+   docker-compose logs -f
+   ```
+5. To stop the bot:
+   ```bash
+   docker-compose down
+   ```
+
+Data Persistence:
+- All bot data is stored in Docker volumes (`discord_bot_data` and `discord_bot_logs`)
+- This ensures your data persists across container restarts and updates
+- To completely reset data, you can remove the volumes:
+  ```bash
+  docker-compose down -v
+  ```

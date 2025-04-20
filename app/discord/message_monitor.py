@@ -1,729 +1,659 @@
-import discord
-import logging
-import json
-import uuid
-import re
 import os
+import json
+import logging
 import asyncio
-import aiohttp
-import time
-from datetime import datetime
-from utils.database import EncryptedDatabase
+import discord
+from discord import Message, User, TextChannel, Member, Guild, Reaction, Embed, Activity, ActivityType
+from typing import Dict, List, Any, Optional, Union, Callable, Awaitable
+from datetime import datetime, timezone
+import uuid
+import random
+import re
+import traceback
 
-# Optional AI vision imports - will be imported dynamically if configured
-vision_imports_successful = False
-try:
-    from PIL import Image
-    import io
-    import requests
-    import base64
-    vision_imports_successful = True
-except ImportError:
-    pass
+from utils.database import UnifiedDatabase
+from config.config import FILES_DIRECTORY
 
 logger = logging.getLogger('discord_bot')
 
+class MessageListener:
+    def __init__(self, name: str, regex_pattern: str, callback: Callable[[Message, re.Match], Awaitable[None]], 
+                 priority: int = 0, enabled: bool = True,
+                 ignore_bot: bool = True, human_only: bool = False):
+        """
+        Initialize a message listener.
+        
+        Args:
+            name (str): The name of the listener
+            regex_pattern (str): The regex pattern to match against messages
+            callback (callable): The function to call when a message matches
+            priority (int): The priority of the listener (higher executes first)
+            enabled (bool): Whether this listener is enabled
+            ignore_bot (bool): Whether to ignore bot messages
+            human_only (bool): Whether to only trigger on messages from humans
+        """
+        self.name = name
+        self.pattern = regex_pattern
+        self.regex = re.compile(regex_pattern, re.IGNORECASE)
+        self.callback = callback
+        self.priority = priority
+        self.enabled = enabled
+        self.ignore_bot = ignore_bot
+        self.human_only = human_only
+
 class MessageMonitor:
-    """
-    Monitor and log all Discord messages in an encrypted database.
-    This service captures all messages across all channels the bot has access to.
-    """
-    
-    def __init__(self, client, db_path, encryption_key, vision_api_key=None):
+    def __init__(self, db: UnifiedDatabase, encryption_key: str):
         """
-        Initialize the message monitor service.
+        Initialize the message monitor.
         
         Args:
-            client (discord.Client): The Discord client object
-            db_path (str): Path to the SQLite database file
-            encryption_key (str): Key used for encrypting sensitive data
-            vision_api_key (str, optional): API key for vision AI services
+            db (UnifiedDatabase): The unified database to store messages and AI interactions
+            encryption_key (str): The key for encrypting sensitive data
         """
+        logger.info("Initializing MessageMonitor with unified database")
+        self.db = db
+        self.encryption_key = encryption_key
+        self.listeners: List[MessageListener] = []
+        self.listeners_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'message_listeners.json')
+        self.client = None  # Will be set by the bot when it initializes
+        self._load_listeners()
+        logger.info(f"Loaded {len(self.listeners)} message listeners")
+    
+    def set_client(self, client):
+        """Set the Discord client reference."""
         self.client = client
-        self.db = EncryptedDatabase(db_path, encryption_key)
-        self.vision_api_key = vision_api_key
-        self.ai_analysis_enabled = vision_imports_successful and vision_api_key is not None
-        
-        # Cache for improving performance
-        self._cache = {
-            'statistics': {'data': None, 'timestamp': 0},
-            'recent_messages': {'data': None, 'timestamp': 0},
-            'user_activity': {'data': None, 'timestamp': 0},
-            'file_types': {'data': None, 'timestamp': 0}
-        }
-        self._cache_ttl = 300  # 5 minutes cache lifetime
-        
-        if self.ai_analysis_enabled:
-            logger.info("MessageMonitor initialized with AI content analysis")
-        else:
-            if vision_api_key is None:
-                logger.info("MessageMonitor initialized without AI content analysis (no API key provided)")
-            elif not vision_imports_successful:
-                logger.info("MessageMonitor initialized without AI content analysis (required packages not installed)")
-            else:
-                logger.info("MessageMonitor initialized without AI content analysis")
-        
-        # Register message event handler
-        @client.event
-        async def on_message(message):
-            await self.process_message(message)
-    
-    async def process_message(self, message):
+        # Also set it in the database so it can access Discord data if needed
+        self.db.set_discord_client(client)
+        logger.info("Discord client reference set in MessageMonitor")
+
+    def get_database(self):
+        """Get the database instance."""
+        return self.db
+
+    def _load_listeners(self):
+        """Load message listeners from file."""
+        try:
+            if os.path.exists(self.listeners_file):
+                with open(self.listeners_file, 'r') as f:
+                    listeners_data = json.load(f)
+                
+                # Clear existing listeners
+                self.listeners = []
+                
+                # Create placeholder callback - will be replaced at runtime
+                async def placeholder_callback(message, match):
+                    logger.warning(f"Placeholder callback called for {message.content}")
+                    pass
+                
+                # Add listeners from file
+                for listener_data in listeners_data:
+                    listener = MessageListener(
+                        name=listener_data['name'],
+                        regex_pattern=listener_data['pattern'],
+                        callback=placeholder_callback,  # Will be replaced
+                        priority=listener_data.get('priority', 0),
+                        enabled=listener_data.get('enabled', True),
+                        ignore_bot=listener_data.get('ignore_bot', True),
+                        human_only=listener_data.get('human_only', False)
+                    )
+                    self.listeners.append(listener)
+        except Exception as e:
+            logger.error(f"Error loading message listeners: {e}", exc_info=True)
+            # Create empty file if it doesn't exist
+            if not os.path.exists(self.listeners_file):
+                os.makedirs(os.path.dirname(self.listeners_file), exist_ok=True)
+                with open(self.listeners_file, 'w') as f:
+                    json.dump([], f)
+
+    def save_listeners(self):
+        """Save message listeners to file."""
+        try:
+            listeners_data = []
+            for listener in self.listeners:
+                listeners_data.append({
+                    'name': listener.name,
+                    'pattern': listener.pattern,
+                    'priority': listener.priority,
+                    'enabled': listener.enabled,
+                    'ignore_bot': listener.ignore_bot,
+                    'human_only': listener.human_only
+                })
+            
+            os.makedirs(os.path.dirname(self.listeners_file), exist_ok=True)
+            with open(self.listeners_file, 'w') as f:
+                json.dump(listeners_data, f, indent=2)
+            
+            logger.info(f"Saved {len(listeners_data)} message listeners")
+        except Exception as e:
+            logger.error(f"Error saving message listeners: {e}", exc_info=True)
+
+    def add_listener(self, name: str, regex_pattern: str,
+                    callback: Callable[[Message, re.Match], Awaitable[None]],
+                    priority: int = 0, enabled: bool = True,
+                    ignore_bot: bool = True, human_only: bool = False) -> MessageListener:
         """
-        Process and store a Discord message.
+        Add a message listener.
         
         Args:
-            message (discord.Message): The Discord message object
+            name (str): The name of the listener
+            regex_pattern (str): The regex pattern to match against messages
+            callback (callable): The function to call when a message matches
+            priority (int): The priority of the listener (higher executes first)
+            enabled (bool): Whether this listener is enabled
+            ignore_bot (bool): Whether to ignore bot messages
+            human_only (bool): Whether to only trigger on messages from humans
+            
+        Returns:
+            MessageListener: The created listener
+        """
+        listener = MessageListener(
+            name=name,
+            regex_pattern=regex_pattern,
+            callback=callback,
+            priority=priority,
+            enabled=enabled,
+            ignore_bot=ignore_bot,
+            human_only=human_only
+        )
+        self.listeners.append(listener)
+        
+        # Sort listeners by priority (higher first)
+        self.listeners.sort(key=lambda l: l.priority, reverse=True)
+        
+        self.save_listeners()
+        return listener
+
+    def remove_listener(self, name: str) -> bool:
+        """
+        Remove a message listener.
+        
+        Args:
+            name (str): The name of the listener
+            
+        Returns:
+            bool: Whether the listener was removed
+        """
+        initial_count = len(self.listeners)
+        self.listeners = [l for l in self.listeners if l.name != name]
+        removed = len(self.listeners) < initial_count
+        if removed:
+            self.save_listeners()
+        return removed
+
+    def get_listener(self, name: str) -> Optional[MessageListener]:
+        """
+        Get a message listener.
+        
+        Args:
+            name (str): The name of the listener
+            
+        Returns:
+            Optional[MessageListener]: The listener if found, None otherwise
+        """
+        for listener in self.listeners:
+            if listener.name == name:
+                return listener
+        return None
+
+    def enable_listener(self, name: str) -> bool:
+        """
+        Enable a message listener.
+        
+        Args:
+            name (str): The name of the listener
+            
+        Returns:
+            bool: Whether the listener was enabled
+        """
+        listener = self.get_listener(name)
+        if listener:
+            listener.enabled = True
+            self.save_listeners()
+            return True
+        return False
+
+    def disable_listener(self, name: str) -> bool:
+        """
+        Disable a message listener.
+        
+        Args:
+            name (str): The name of the listener
+            
+        Returns:
+            bool: Whether the listener was disabled
+        """
+        listener = self.get_listener(name)
+        if listener:
+            listener.enabled = False
+            self.save_listeners()
+            return True
+        return False
+
+    def update_listener_callback(self, name: str, callback: Callable[[Message, re.Match], Awaitable[None]]) -> bool:
+        """
+        Update a listener's callback function.
+        
+        Args:
+            name (str): The name of the listener
+            callback (callable): The new callback function
+            
+        Returns:
+            bool: Whether the callback was updated
+        """
+        listener = self.get_listener(name)
+        if listener:
+            listener.callback = callback
+            return True
+        return False
+
+    async def process_message(self, message: Message) -> bool:
+        """
+        Process a message and store it in the database.
+        
+        Args:
+            message (Message): The Discord message to process
+            
+        Returns:
+            bool: Whether the message was stored successfully
         """
         try:
-            # Skip messages from the bot itself to avoid circular logging
-            if message.author == self.client.user:
-                return
+            # Don't process system messages
+            if message.type != discord.MessageType.default:
+                return False
                 
-            # Skip messages from any bot, as they'll be logged in AI interactions if relevant
-            if message.author.bot:
-                logger.debug(f"Skipping message from bot {message.author.name} (ID: {message.author.id})")
-                return
-                
-            # Extract all relevant data from the message
-            attachments_data = []
-            for attachment in message.attachments:
-                attachments_data.append({
-                    'id': str(attachment.id),
-                    'filename': attachment.filename,
-                    'url': attachment.url,
-                    'size': attachment.size,
-                    'content_type': attachment.content_type if hasattr(attachment, 'content_type') else None
-                })
-                
-            # Format mentions for metadata
-            mentions = {
-                'users': [str(user.id) for user in message.mentions],
-                'roles': [str(role.id) for role in message.role_mentions],
-                'channels': [str(channel.id) for channel in message.channel_mentions]
-            }
+            # Extract message data
+            guild_name = message.guild.name if message.guild else "DM"
+            author_name = f"{message.author.name}"
+            channel_name = f"{message.channel.name}" if hasattr(message.channel, "name") else "Unknown"
             
-            # Get additional message flags and properties
-            message_flags = {}
-            for flag_name in dir(message.flags):
-                if not flag_name.startswith('_') and isinstance(getattr(message.flags, flag_name), bool):
-                    message_flags[flag_name] = getattr(message.flags, flag_name)
+            logger.debug(f"Processing message from {author_name} in {guild_name}/{channel_name}: {message.content[:30]}...")
             
-            # Create the message data dictionary
+            # Store message in unified database
+            timestamp = message.created_at.isoformat()
             message_data = {
                 'message_id': str(message.id),
                 'channel_id': str(message.channel.id),
-                'guild_id': str(message.guild.id) if message.guild else "DM",
+                'guild_id': str(message.guild.id) if message.guild else "0",
                 'author_id': str(message.author.id),
-                'author_name': f"{message.author.name}#{message.author.discriminator}" if hasattr(message.author, 'discriminator') else message.author.name,
+                'author_name': author_name,
                 'content': message.content,
-                'timestamp': message.created_at.isoformat(),
-                'attachments': json.dumps(attachments_data) if attachments_data else None,
-                'message_type': str(message.type.name) if hasattr(message.type, 'name') else str(message.type),
+                'timestamp': timestamp,
+                'message_type': str(message.type.name),
                 'is_bot': message.author.bot,
-                'metadata': json.dumps({
-                    'mentions': mentions,
-                    'embeds_count': len(message.embeds),
-                    'flags': message_flags,
-                    'pinned': message.pinned,
-                    'system_content': message.system_content if hasattr(message, 'system_content') else None,
-                    'reference': str(message.reference.message_id) if message.reference else None
-                })
+                'attachments': []
             }
             
-            # Store message in database using the queue to prevent concurrent access issues
-            await self.db.queue.execute(lambda: self.db.store_message(message_data))
-            logger.debug(f"Stored message {message.id} from user {message.author.name}")
-            
-            # Invalidate cache for dashboard data
-            self._invalidate_cache('statistics')
-            self._invalidate_cache('recent_messages')
-            self._invalidate_cache('user_activity')
-            
-            # Use message_id consistently to ensure proper association
-            message_id = str(message.id)
-            
-            # Download and store attachments and images/files from links
-            downloaded_files = await self.db.store_message_files(message_data)
-            file_analysis_tasks = []
-            
-            # Extract and download URLs from embeds
-            if message.embeds:
-                for embed in message.embeds:
-                    # Check for image URLs in embeds
-                    if embed.image and embed.image.url:
-                        filename = embed.image.url.split('/')[-1].split('?')[0]
-                        file_id = await self.db.download_url(
-                            embed.image.url, 
-                            filename, 
-                            message_id,  # Explicitly use message_id to ensure association
-                            str(message.channel.id),
-                            str(message.guild.id) if message.guild else "DM", 
-                            str(message.author.id)
-                        )
-                        if file_id:
-                            downloaded_files.append(file_id)
-                            if self.ai_analysis_enabled:
-                                file_analysis_tasks.append(self.analyze_file_content(file_id))
-                    
-                    # Check for thumbnail URLs in embeds
-                    if embed.thumbnail and embed.thumbnail.url:
-                        filename = embed.thumbnail.url.split('/')[-1].split('?')[0]
-                        file_id = await self.db.download_url(
-                            embed.thumbnail.url, 
-                            filename, 
-                            message_id,  # Explicitly use message_id to ensure association
-                            str(message.channel.id),
-                            str(message.guild.id) if message.guild else "DM", 
-                            str(message.author.id)
-                        )
-                        if file_id:
-                            downloaded_files.append(file_id)
-                            if self.ai_analysis_enabled:
-                                file_analysis_tasks.append(self.analyze_file_content(file_id))
-                    
-                    # Check for other URLs in embed fields
-                    if embed.description:
-                        embed_file_ids = await self._extract_and_download_urls(
-                            embed.description,
-                            message_id,
-                            str(message.channel.id),
-                            str(message.guild.id) if message.guild else "DM",
-                            str(message.author.id)
-                        )
-                        downloaded_files.extend(embed_file_ids)
-                        if self.ai_analysis_enabled:
-                            for file_id in embed_file_ids:
-                                file_analysis_tasks.append(self.analyze_file_content(file_id))
-                    
-                    # Check fields for URLs
-                    if embed.fields:
-                        for field in embed.fields:
-                            field_file_ids = await self._extract_and_download_urls(
-                                field.value,
-                                message_id,
-                                str(message.channel.id),
-                                str(message.guild.id) if message.guild else "DM",
-                                str(message.author.id)
-                            )
-                            downloaded_files.extend(field_file_ids)
-                            if self.ai_analysis_enabled:
-                                for file_id in field_file_ids:
-                                    file_analysis_tasks.append(self.analyze_file_content(file_id))
-            
-            # Extract and download URLs from message content
-            if message.content:
-                content_file_ids = await self._extract_and_download_urls(
-                    message.content,
-                    message_id,
-                    str(message.channel.id),
-                    str(message.guild.id) if message.guild else "DM",
-                    str(message.author.id)
-                )
-                downloaded_files.extend(content_file_ids)
-                if self.ai_analysis_enabled:
-                    for file_id in content_file_ids:
-                        file_analysis_tasks.append(self.analyze_file_content(file_id))
-            
-            # Log the download completion
-            if downloaded_files:
-                logger.info(f"Downloaded {len(downloaded_files)} files from message {message_id}")
-                # Invalidate file types cache
-                self._invalidate_cache('file_types')
-            
-            # Analyze all downloaded files in parallel if AI analysis is enabled
-            if self.ai_analysis_enabled and file_analysis_tasks:
-                logger.debug(f"Starting AI analysis for {len(file_analysis_tasks)} files")
-                await asyncio.gather(*file_analysis_tasks)
-                logger.info(f"Completed AI analysis for {len(file_analysis_tasks)} files from message {message_id}")
-            
-        except Exception as e:
-            logger.error(f"Error processing message: {e}", exc_info=True)
-    
-    def _invalidate_cache(self, cache_key):
-        """
-        Invalidate a specific cache entry.
-        
-        Args:
-            cache_key (str): The cache key to invalidate
-        """
-        if cache_key in self._cache:
-            self._cache[cache_key]['data'] = None
-            self._cache[cache_key]['timestamp'] = 0
-    
-    def _get_from_cache(self, cache_key):
-        """
-        Get data from cache if available and not expired.
-        
-        Args:
-            cache_key (str): The cache key to retrieve
-            
-        Returns:
-            tuple: (data, is_cached) where is_cached is a boolean indicating if data came from cache
-        """
-        cache_entry = self._cache.get(cache_key)
-        if not cache_entry:
-            return None, False
-            
-        current_time = time.time()
-        if cache_entry['data'] and (current_time - cache_entry['timestamp'] < self._cache_ttl):
-            return cache_entry['data'], True
-            
-        return None, False
-    
-    def _update_cache(self, cache_key, data):
-        """
-        Update cache with new data.
-        
-        Args:
-            cache_key (str): The cache key to update
-            data: The data to store in cache
-        """
-        if cache_key in self._cache:
-            self._cache[cache_key]['data'] = data
-            self._cache[cache_key]['timestamp'] = time.time()
-    
-    async def _extract_and_download_urls(self, text, message_id, channel_id, guild_id, author_id):
-        """
-        Extract URLs from text and download files if they match common media types.
-        
-        Args:
-            text (str): Text to scan for URLs
-            message_id (str): ID of the message containing the URLs
-            channel_id (str): ID of the channel
-            guild_id (str): ID of the guild
-            author_id (str): ID of the message author
-            
-        Returns:
-            list: List of downloaded file IDs
-        """
-        # Common file extensions to download
-        file_extensions = [
-            '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg',  # Images
-            '.mp4', '.webm', '.mov', '.avi', '.wmv',  # Videos
-            '.mp3', '.wav', '.ogg', '.flac',  # Audio
-            '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',  # Documents
-            '.zip', '.rar', '.7z', '.tar', '.gz'  # Archives
-        ]
-        
-        # Extract URLs using regex
-        urls = re.findall(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', text)
-        downloaded_file_ids = []
-        
-        for url in urls:
-            # Check if the URL ends with one of the file extensions
-            if any(url.lower().endswith(ext) for ext in file_extensions):
-                # Generate a filename from the URL
-                filename = url.split('/')[-1].split('?')[0]
-                file_id = await self.db.download_url(
-                    url,
-                    filename,
-                    message_id,  # Always associate with the original message
-                    channel_id,
-                    guild_id,
-                    author_id
-                )
-                if file_id:
-                    downloaded_file_ids.append(file_id)
-                    
-        return downloaded_file_ids
-        
-    async def analyze_file_content(self, file_id):
-        """
-        Analyze the content of a file using AI services and update its metadata.
-        
-        Args:
-            file_id (str): The ID of the file to analyze
-        """
-        try:
-            # Skip if AI analysis is not enabled
-            if not self.ai_analysis_enabled:
-                return
-                
-            # Get file information from database
-            file_info = await self.db.get_file_info(file_id)
-            if not file_info:
-                logger.warning(f"Could not find file info for file_id: {file_id}")
-                return
-                
-            file_path = file_info.get('file_path')
-            file_type = file_info.get('file_type', '').lower()
-            
-            if not file_path or not os.path.exists(file_path):
-                logger.warning(f"File path does not exist: {file_path}")
-                return
-                
-            # Only analyze images for now
-            image_types = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']
-            if file_type in image_types:
-                # Analyze image content
-                content_description = await self._analyze_image(file_path)
-                if content_description:
-                    # Update file metadata with AI analysis
-                    categories = self._categorize_content(content_description)
-                    suggested_name = self._generate_descriptive_name(file_path, content_description)
-                    
-                    # Update file metadata in database
-                    metadata = {
-                        'ai_description': content_description,
-                        'categories': categories,
-                        'suggested_name': suggested_name,
-                        'analyzed_at': datetime.now().isoformat()
+            # Process attachments
+            if message.attachments:
+                message_data['attachments'] = [
+                    {
+                        'id': str(attachment.id),
+                        'filename': attachment.filename,
+                        'url': attachment.url,
+                        'proxy_url': attachment.proxy_url,
+                        'size': attachment.size,
+                        'height': attachment.height,
+                        'width': attachment.width,
+                        'content_type': attachment.content_type if hasattr(attachment, 'content_type') else None
                     }
-                    
-                    await self.db.update_file_metadata(file_id, metadata)
-                    logger.info(f"Updated file {file_id} with AI analysis: {', '.join(categories)}")
+                    for attachment in message.attachments
+                ]
             
-            # For document analysis, we would add handlers for different file types here
-            # elif file_type in ['pdf', 'doc', 'docx']:
-            #     # Analyze document content
-            #     pass
+            # Store message in unified database
+            success = await self.db.store_message(message_data)
             
+            if success and message.attachments:
+                # Download and store files
+                files = await self.db.store_message_files(message_data)
+                if files:
+                    logger.debug(f"Stored {len(files)} files for message {message.id}")
+            
+            # Store channel information if available
+            if message.channel and isinstance(message.channel, TextChannel) and message.guild:
+                await self.store_channel(message.channel)
+            
+            # Process message listeners
+            await self.process_listeners(message)
+            
+            return success
         except Exception as e:
-            logger.error(f"Error analyzing file content: {e}", exc_info=True)
-    
-    async def _analyze_image(self, file_path):
+            logger.error(f"Error processing message {message.id}: {e}", exc_info=True)
+            return False
+
+    async def process_listeners(self, message: Message) -> List[str]:
         """
-        Analyze an image using Google Gemini vision API.
+        Process all message listeners on a message.
         
         Args:
-            file_path (str): Path to the image file
+            message (Message): The Discord message to process
             
         Returns:
-            str: Description of the image content
+            List[str]: The names of triggered listeners
+        """
+        triggered = []
+        
+        for listener in self.listeners:
+            if not listener.enabled:
+                continue
+                
+            # Check if we should ignore this message
+            if listener.human_only and message.author.bot:
+                continue
+                
+            if listener.ignore_bot and message.author.bot:
+                continue
+                
+            # Check for regex pattern match
+            match = listener.regex.search(message.content)
+            if match:
+                try:
+                    logger.debug(f"Listener '{listener.name}' matched message {message.id}")
+                    await listener.callback(message, match)
+                    triggered.append(listener.name)
+                except Exception as e:
+                    logger.error(f"Error in listener '{listener.name}': {e}", exc_info=True)
+        
+        return triggered
+
+    async def process_edit(self, before: Message, after: Message) -> bool:
+        """
+        Process a message edit and store changes.
+        
+        Args:
+            before (Message): The message before the edit
+            after (Message): The message after the edit
+            
+        Returns:
+            bool: Whether the edit was stored successfully
         """
         try:
-            # Skip if we don't have the required imports
-            if not vision_imports_successful:
-                return None
+            # Skip if content didn't change
+            if before.content == after.content:
+                return False
                 
-            if not self.vision_api_key:
-                logger.debug("No Gemini API key provided for image analysis")
-                return None
-                
-            # Open the image file
-            image = Image.open(file_path)
+            logger.debug(f"Processing edit for message {after.id}")
             
-            # Resize image if too large for API
-            max_size = (1024, 1024)
-            if image.width > max_size[0] or image.height > max_size[1]:
-                image.thumbnail(max_size)
-            
-            # Convert to bytes for API request
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format=image.format or 'JPEG')
-            img_byte_arr.seek(0)
-            
-            # Google Gemini API call
-            api_url = "https://generativelanguage.googleapis.com/v1/models/gemini-pro-vision:generateContent"
-            
-            # Prepare the request payload
-            import base64
-            
-            # Convert image to base64
-            encoded_image = base64.b64encode(img_byte_arr.read()).decode('utf-8')
-            
-            payload = {
-                "contents": [{
-                    "parts": [
-                        {"text": "Describe this image in detail. Focus on the content, objects, people, animals, scenery, or any other elements."},
-                        {
-                            "inline_data": {
-                                "mime_type": f"image/{image.format.lower() if image.format else 'jpeg'}",
-                                "data": encoded_image
-                            }
-                        }
-                    ]
-                }]
+            # Prepare edit data
+            edit_data = {
+                'message_id': str(after.id),
+                'channel_id': str(after.channel.id),
+                'guild_id': str(after.guild.id) if after.guild else "0",
+                'author_id': str(after.author.id),
+                'original_content': before.content,
+                'new_content': after.content,
+                'edit_timestamp': after.edited_at.isoformat() if after.edited_at else datetime.now(timezone.utc).isoformat()
             }
             
-            headers = {
-                "Content-Type": "application/json",
-                "x-goog-api-key": self.vision_api_key
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(api_url, headers=headers, json=payload) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        
-                        # Extract the response text from Gemini
-                        try:
-                            description = result['candidates'][0]['content']['parts'][0]['text']
-                            logger.info(f"Gemini successfully analyzed image: {file_path}")
-                            return description
-                        except (KeyError, IndexError) as e:
-                            logger.error(f"Failed to extract description from Gemini response: {e}")
-                            return None
-                    else:
-                        error_text = await response.text()
-                        logger.warning(f"Gemini API returned status code {response.status}: {error_text}")
-                        return None
-                
+            # Store edit in unified database
+            success = await self.db.store_message_edit(edit_data)
+            return success
         except Exception as e:
-            logger.error(f"Error in Gemini image analysis: {e}", exc_info=True)
-            return None
-    
-    def _categorize_content(self, description):
+            logger.error(f"Error processing edit for message {after.id}: {e}", exc_info=True)
+            return False
+
+    async def store_channel(self, channel: TextChannel) -> bool:
         """
-        Categorize content based on AI description.
+        Store channel information in database.
         
         Args:
-            description (str): AI-generated description of content
+            channel (TextChannel): The Discord channel to store
             
         Returns:
-            list: Categories that match the content
+            bool: Whether the channel was stored successfully
         """
-        # Define category keywords
-        categories = {
-            'people': ['person', 'people', 'face', 'man', 'woman', 'child', 'group'],
-            'nature': ['nature', 'landscape', 'mountain', 'beach', 'forest', 'tree', 'ocean', 'sky'],
-            'animals': ['animal', 'dog', 'cat', 'bird', 'wildlife', 'pet'],
-            'food': ['food', 'meal', 'restaurant', 'dinner', 'lunch', 'breakfast', 'cooking'],
-            'technology': ['computer', 'phone', 'device', 'screen', 'technology', 'software'],
-            'art': ['art', 'drawing', 'painting', 'artwork', 'sculpture', 'creative'],
-            'document': ['document', 'text', 'paper', 'writing', 'letter', 'form'],
-            'screenshot': ['screenshot', 'screen', 'interface', 'ui', 'app'],
-            'meme': ['meme', 'funny', 'joke', 'humor'],
-            'diagram': ['diagram', 'chart', 'graph', 'flowchart', 'schematic']
-        }
-        
-        # Match description with categories
-        matched_categories = []
-        description_lower = description.lower()
-        
-        for category, keywords in categories.items():
-            if any(keyword in description_lower for keyword in keywords):
-                matched_categories.append(category)
-        
-        return matched_categories or ['uncategorized']
-    
-    def _generate_descriptive_name(self, file_path, description):
+        try:
+            if not hasattr(channel, 'guild'):
+                logger.debug(f"Skipping channel {channel.id} - no guild attribute")
+                return False
+                
+            logger.debug(f"Storing channel {channel.name} ({channel.id})")
+            
+            # Prepare channel data
+            channel_data = {
+                'channel_id': str(channel.id),
+                'guild_id': str(channel.guild.id) if channel.guild else "0",
+                'channel_name': channel.name if hasattr(channel, 'name') else "Unknown",
+                'channel_type': str(channel.type.name),
+                'last_update': datetime.now().isoformat()
+            }
+            
+            # Store channel in unified database
+            success = await self.db.store_channel(channel_data)
+            return success
+        except Exception as e:
+            logger.error(f"Error storing channel {channel.id}: {e}", exc_info=True)
+            return False
+
+    async def store_channels(self, guild: Guild) -> int:
         """
-        Generate a descriptive filename based on content analysis.
+        Store all channels in a guild.
         
         Args:
-            file_path (str): Original file path
-            description (str): AI-generated description of content
+            guild (Guild): The Discord guild to scan
             
         Returns:
-            str: Suggested descriptive filename
+            int: Number of channels stored
         """
-        # Extract important keywords from description
-        # In a real implementation, you might use NLP techniques like keyword extraction
-        keywords = [word.lower() for word in description.split() if len(word) > 3]
-        keywords = keywords[:3]  # Take up to 3 keywords
+        stored = 0
         
-        # Get original file extension
-        original_name = os.path.basename(file_path)
-        _, extension = os.path.splitext(original_name)
+        for channel in guild.channels:
+            if isinstance(channel, TextChannel):
+                if await self.store_channel(channel):
+                    stored += 1
         
-        # Generate timestamp
-        timestamp = datetime.now().strftime("%Y%m%d")
-        
-        # Combine elements into a new filename
-        if keywords:
-            suggested_name = f"{'-'.join(keywords)}_{timestamp}{extension}"
-        else:
-            suggested_name = f"content_{timestamp}{extension}"
-            
-        return suggested_name
-    
-    async def get_dashboard_data(self):
+        logger.debug(f"Stored {stored} channels from guild {guild.name} ({guild.id})")
+        return stored
+
+    async def process_reaction(self, reaction: Reaction, user: Union[User, Member]) -> bool:
         """
-        Get data for the dashboard with optimal log(n) performance.
-        Utilizes caching to minimize database queries.
-        
-        Returns:
-            dict: Dashboard data including statistics and recent activity
-        """
-        # Get cached statistics or retrieve new ones
-        statistics, is_cached = self._get_from_cache('statistics')
-        if not is_cached:
-            statistics = self.db.get_statistics()
-            self._update_cache('statistics', statistics)
-        
-        # Get cached recent messages or retrieve new ones
-        recent_messages, is_cached = self._get_from_cache('recent_messages')
-        if not is_cached:
-            # Use indexed query with limit for O(log n) complexity
-            recent_messages = self.db.get_recent_messages(limit=25)
-            self._update_cache('recent_messages', recent_messages)
-        
-        # Get cached user activity or retrieve new ones
-        user_activity, is_cached = self._get_from_cache('user_activity')
-        if not is_cached:
-            # Get user activity metrics with indexed queries
-            user_activity = self.db.get_active_users(limit=10)
-            self._update_cache('user_activity', user_activity)
-        
-        # Get cached file type distribution or retrieve new ones
-        file_types, is_cached = self._get_from_cache('file_types')
-        if not is_cached:
-            # Build file type distribution with indexed query
-            file_types = statistics.get('file_types', {})
-            self._update_cache('file_types', file_types)
-        
-        # Compile all dashboard data
-        dashboard_data = {
-            'statistics': statistics,
-            'recent_messages': recent_messages,
-            'user_activity': user_activity,
-            'file_types': file_types,
-            'last_updated': datetime.now().isoformat()
-        }
-        
-        return dashboard_data
-    
-    async def search_messages(self, query, filter_criteria=None, limit=100, offset=0):
-        """
-        Search messages using indexed fields for O(log n) search performance.
+        Process a reaction and store it.
         
         Args:
-            query (str): The search query
-            filter_criteria (dict): Optional filters like user_id, channel_id, etc.
-            limit (int): Maximum results to return
-            offset (int): Pagination offset
+            reaction (Reaction): The Discord reaction to process
+            user (Union[User, Member]): The user who added the reaction
             
         Returns:
-            dict: Search results with pagination info
+            bool: Whether the reaction was stored successfully
         """
-        start_time = time.time()
-        results = self.db.search_messages(query, filter_criteria=filter_criteria, limit=limit, offset=offset)
+        try:
+            message = reaction.message
+            emoji = reaction.emoji
+            
+            # Skip reactions to system messages
+            if message.type != discord.MessageType.default:
+                return False
+                
+            logger.debug(f"Processing reaction {emoji} from user {user.name} on message {message.id}")
+            
+            # Create a unique ID for the reaction
+            reaction_id = str(uuid.uuid4())
+            
+            # Prepare reaction data
+            reaction_data = {
+                'reaction_id': reaction_id,
+                'message_id': str(message.id),
+                'user_id': str(user.id),
+                'emoji_name': emoji.name if hasattr(emoji, 'name') else str(emoji),
+                'emoji_id': str(emoji.id) if hasattr(emoji, 'id') else None,
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+            
+            # Store in unified database
+            conn = self.db._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+            INSERT INTO reactions (
+                reaction_id, message_id, user_id, emoji_name, emoji_id, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                reaction_data['reaction_id'],
+                reaction_data['message_id'],
+                reaction_data['user_id'],
+                reaction_data['emoji_name'],
+                reaction_data['emoji_id'],
+                reaction_data['timestamp']
+            ))
+            
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error processing reaction: {e}", exc_info=True)
+            return False
+
+    async def store_ai_interaction(self, interaction_data: Dict[str, Any]) -> bool:
+        """
+        Store an AI interaction in the unified database.
         
-        return {
-            'results': results,
-            'count': len(results),
-            'execution_time': time.time() - start_time,
-            'has_more': len(results) >= limit,
-            'query': query,
-            'filters': filter_criteria
-        }
-    
+        Args:
+            interaction_data (dict): AI interaction data
+            
+        Returns:
+            bool: Whether the interaction was stored successfully
+        """
+        try:
+            # Generate a UUID if not provided
+            if 'interaction_id' not in interaction_data:
+                interaction_data['interaction_id'] = str(uuid.uuid4())
+                
+            # Add timestamp if not provided
+            if 'timestamp' not in interaction_data:
+                interaction_data['timestamp'] = datetime.now(timezone.utc).isoformat()
+                
+            logger.debug(f"Storing AI interaction {interaction_data['interaction_id']}")
+            
+            # Store in unified database
+            success = await self.db.store_ai_interaction(interaction_data)
+            
+            if not success:
+                logger.error(f"Failed to store AI interaction {interaction_data['interaction_id']}")
+                
+            return success
+        except Exception as e:
+            logger.error(f"Error storing AI interaction: {e}", exc_info=True)
+            return False
+            
+    async def backup_database(self, backup_path: str = None) -> bool:
+        """
+        Create a backup of the database.
+        
+        Args:
+            backup_path (str, optional): Path to store the backup. If None, 
+                                        a timestamped backup will be created.
+            
+        Returns:
+            bool: Success status
+        """
+        try:
+            # Get the current database path
+            db_path = self.db.db_path
+            
+            # Generate backup path if not provided
+            if not backup_path:
+                timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+                backup_path = f"{db_path}.bak-{timestamp}"
+            else:
+                backup_path = f"{backup_path}"
+                
+            logger.info(f"Creating database backup at {backup_path}")
+            
+            # Connect to the database (need raw connection to use with backup)
+            conn = sqlite3.connect(db_path)
+            
+            # Make backup
+            backup_conn = sqlite3.connect(backup_path)
+            conn.backup(backup_conn)
+            
+            # Close connections
+            backup_conn.close()
+            conn.close()
+            
+            logger.info(f"Database backup created successfully at {backup_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error backing up database: {e}", exc_info=True)
+            return False
+            
+    async def migrate_database(self, messages_db_path: str, ai_interactions_db_path: str, source_encryption_key: str = None) -> Dict[str, Any]:
+        """
+        Migrate data from old separate database files to the unified database.
+        
+        Args:
+            messages_db_path (str): Path to old messages database
+            ai_interactions_db_path (str): Path to old AI interactions database
+            source_encryption_key (str, optional): Encryption key used in source databases, if different
+            
+        Returns:
+            Dict[str, Any]: Migration statistics
+        """
+        try:
+            logger.info("Starting database migration...")
+            
+            # Check if the old database files exist
+            messages_exists = os.path.exists(messages_db_path)
+            ai_exists = os.path.exists(ai_interactions_db_path)
+            
+            if not messages_exists and not ai_exists:
+                logger.warning("No existing databases found for migration")
+                return {"error": "No existing databases found for migration"}
+                
+            # Start migration
+            stats = await self.db.migrate_from_old_databases(messages_db_path, ai_interactions_db_path, source_encryption_key)
+            
+            logger.info(f"Migration completed: {stats['messages_migrated']} messages, {stats['ai_interactions_migrated']} AI interactions migrated")
+            
+            if len(stats['errors']) > 0:
+                logger.warning(f"Migration completed with {len(stats['errors'])} errors")
+                
+            return stats
+        except Exception as e:
+            logger.error(f"Error during database migration: {e}", exc_info=True)
+            return {"error": str(e)}
+
+    async def get_stats(self, days: int = 30, guild_id: str = None) -> Dict[str, Any]:
+        """
+        Get database statistics.
+        
+        Args:
+            days (int): Number of days to include in stats
+            guild_id (str, optional): Guild ID to filter by
+            
+        Returns:
+            Dict[str, Any]: Statistics data
+        """
+        try:
+            return await self.db.get_stats(days, guild_id)
+        except Exception as e:
+            logger.error(f"Error getting stats: {e}", exc_info=True)
+            return {"error": str(e)}
+            
     def close(self):
-        """Close the database connection"""
-        self.db.close()
+        """Close the database connection and any other resources."""
+        logger.debug("Closing MessageMonitor resources...")
+        try:
+            if hasattr(self, 'db') and self.db:
+                logger.debug("Closing database connection.")
+                self.db.close()
+                logger.debug("Database connection closed.")
+        except Exception as e:
+            logger.error(f"Error closing database connection: {e}", exc_info=True)
 
     async def process_message_edit(self, before, after):
         """
-        Process and store an edited Discord message.
+        Process a message edit event.
         
         Args:
-            before (discord.Message): The Discord message before edit
-            after (discord.Message): The Discord message after edit
+            before (Message): The message before the edit
+            after (Message): The message after the edit
+            
+        Returns:
+            bool: Whether the edit was processed successfully
         """
         try:
-            # Skip messages from the bot itself to avoid circular logging
-            if after.author == self.client.user:
-                return
-                
-            # Skip messages from any bot
-            if after.author.bot:
-                logger.debug(f"Skipping edited message from bot {after.author.name} (ID: {after.author.id})")
-                return
-                
-            # Extract message data for the edited message
-            attachments_data = []
-            for attachment in after.attachments:
-                attachments_data.append({
-                    'id': str(attachment.id),
-                    'filename': attachment.filename,
-                    'url': attachment.url,
-                    'size': attachment.size,
-                    'content_type': attachment.content_type if hasattr(attachment, 'content_type') else None
-                })
-                
-            # Format mentions for metadata
-            mentions = {
-                'users': [str(user.id) for user in after.mentions],
-                'roles': [str(role.id) for role in after.role_mentions],
-                'channels': [str(channel.id) for channel in after.channel_mentions]
-            }
-            
-            # Get additional message flags and properties
-            message_flags = {}
-            for flag_name in dir(after.flags):
-                if not flag_name.startswith('_') and isinstance(getattr(after.flags, flag_name), bool):
-                    message_flags[flag_name] = getattr(after.flags, flag_name)
-            
-            # Create the edit history entry
-            edit_data = {
-                'edit_id': str(uuid.uuid4()),
-                'message_id': str(after.id),
-                'channel_id': str(after.channel.id),
-                'guild_id': str(after.guild.id) if after.guild else "DM",
-                'author_id': str(after.author.id),
-                'before_content': before.content,
-                'after_content': after.content,
-                'edit_timestamp': datetime.now().isoformat(),
-                'attachments': json.dumps(attachments_data) if attachments_data else None,
-                'metadata': json.dumps({
-                    'mentions': mentions,
-                    'embeds_count': len(after.embeds),
-                    'flags': message_flags,
-                    'pinned': after.pinned,
-                    'system_content': after.system_content if hasattr(after, 'system_content') else None,
-                    'reference': str(after.reference.message_id) if after.reference else None
-                })
-            }
-            
-            # Store edit history in database
-            await self.db.queue.execute(lambda: self.db.store_message_edit(edit_data))
-            logger.debug(f"Stored edit for message {after.id} from user {after.author.name}")
-            
-            # Invalidate cache for dashboard data
-            self._invalidate_cache('statistics')
-            self._invalidate_cache('recent_messages')
-            self._invalidate_cache('user_activity')
-            
-            # Check for new attachments or file URLs that weren't in the original message
-            downloaded_files = []
-            file_analysis_tasks = []
-            
-            # Handle new attachments
-            for attachment in after.attachments:
-                # Check if this attachment wasn't in the original message
-                if not any(a.id == attachment.id for a in before.attachments):
-                    file_path = await self.db.download_attachment(
-                        attachment, 
-                        str(after.id), 
-                        str(after.channel.id),
-                        str(after.guild.id) if after.guild else "DM",
-                        str(after.author.id),
-                        is_edit=True
-                    )
-                    if file_path:
-                        file_id = os.path.basename(file_path).split('.')[0]
-                        downloaded_files.append(file_id)
-                        if self.ai_analysis_enabled:
-                            file_analysis_tasks.append(self.analyze_file_content(file_id))
-            
-            # Extract and download new URLs from edited message content
-            if after.content != before.content:
-                content_file_ids = await self._extract_and_download_urls(
-                    after.content,
-                    str(after.id),
-                    str(after.channel.id),
-                    str(after.guild.id) if after.guild else "DM",
-                    str(after.author.id),
-                    is_edit=True
-                )
-                downloaded_files.extend(content_file_ids)
-                if self.ai_analysis_enabled:
-                    for file_id in content_file_ids:
-                        file_analysis_tasks.append(self.analyze_file_content(file_id))
-            
-            # Log the download completion for new files
-            if downloaded_files:
-                logger.info(f"Downloaded {len(downloaded_files)} new files from edited message {after.id}")
-                # Invalidate file types cache
-                self._invalidate_cache('file_types')
-            
-            # Analyze all newly downloaded files in parallel if AI analysis is enabled
-            if self.ai_analysis_enabled and file_analysis_tasks:
-                logger.debug(f"Starting AI analysis for {len(file_analysis_tasks)} files from edited message")
-                await asyncio.gather(*file_analysis_tasks)
-                logger.info(f"Completed AI analysis for {len(file_analysis_tasks)} files from edited message {after.id}")
-            
+            logger.debug(f"Process message edit called for: {after.id}")
+            # Use the existing process_edit method to handle the actual processing
+            result = await self.process_edit(before, after)
+            return result
         except Exception as e:
-            logger.error(f"Error processing message edit: {e}", exc_info=True)
+            logger.error(f"Error in process_message_edit: {e}", exc_info=True)
+            return False

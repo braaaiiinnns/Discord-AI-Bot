@@ -169,13 +169,14 @@ class BotCommands:
         """Handle an AI model request"""
         self.logger.info(f"Handling {model_name} request from user {interaction.user}: {prompt}")
         
+        # Defer the response immediately to avoid timeout
+        await interaction.response.defer()
+        
         # Get user state and update context
         uid = str(interaction.user.id)
         user_state = self.bot_state.get_user_state(uid)
         user_state.add_prompt("user", prompt)
         context = user_state.get_context()
-        
-        await interaction.response.defer()
         
         try:
             # Record start time for performance tracking

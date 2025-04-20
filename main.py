@@ -12,8 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Import the bot class
 from app.discord.bot import DiscordBot
 
-def main():
-    # Create and run the Discord bot
+if __name__ == "__main__":
+    # Start Discord bot in the main thread
     bot = None
     try:
         bot = DiscordBot()
@@ -22,7 +22,6 @@ def main():
         print("Bot shutting down...")
     except Exception as e:
         print(f"Error starting bot: {e}")
-        logging.error(f"Error starting bot: {e}", exc_info=True)
     finally:
         # Clean up resources if bot was initialized
         if bot is not None:
@@ -30,7 +29,3 @@ def main():
                 bot.cleanup()
             except Exception as e:
                 print(f"Error during cleanup: {e}")
-                logging.error(f"Error during cleanup: {e}", exc_info=True)
-
-if __name__ == "__main__":
-    main()

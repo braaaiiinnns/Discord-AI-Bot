@@ -1,9 +1,8 @@
 import logging
 import json
 import uuid
-import time
 from datetime import datetime
-from utils.database import EncryptedDatabase
+from utils.database import UnifiedDatabase
 
 logger = logging.getLogger('discord_bot')
 
@@ -13,16 +12,51 @@ class AIInteractionLogger:
     This service captures all AI interactions including the full prompt and response.
     """
     
-    def __init__(self, db_path, encryption_key):
+    def __init__(self, db, encryption_key=None):
         """
         Initialize the AI interaction logger.
         
         Args:
-            db_path (str): Path to the SQLite database file
-            encryption_key (str): Key used for encrypting sensitive data
+            db (UnifiedDatabase): The database instance to use
+            encryption_key (str, optional): Key for encrypting sensitive data, used only if creating a new db
         """
-        self.db = EncryptedDatabase(db_path, encryption_key)
-        logger.info("AIInteractionLogger initialized")
+        if isinstance(db, str):
+            # For backward compatibility, if a string path is provided
+            logger.debug(f"Creating new database instance at path: {db}")
+            self.db = UnifiedDatabase(db, encryption_key)
+        else:
+            # Use the provided database instance
+            logger.debug("Using provided database instance")
+            self.db = db
+        logger.debug("AIInteractionLogger initialized.")
+    
+    async def store_ai_interaction(self, interaction_data):
+        """
+        Store an AI interaction directly (compatible with MessageMonitor).
+        
+        Args:
+            interaction_data (dict): AI interaction data dict
+            
+        Returns:
+            bool: Success status
+        """
+        logger.debug(f"store_ai_interaction called with data for user {interaction_data.get('user_id', 'unknown')}")
+        try:
+            # Generate a unique ID if not provided
+            if 'interaction_id' not in interaction_data:
+                interaction_data['interaction_id'] = str(uuid.uuid4())
+                
+            # Add timestamp if not provided
+            if 'timestamp' not in interaction_data:
+                interaction_data['timestamp'] = datetime.now().isoformat()
+            
+            # Store in database
+            await self.db.store_ai_interaction(interaction_data)
+            logger.debug(f"Interaction {interaction_data['interaction_id']} stored successfully via store_ai_interaction")
+            return True
+        except Exception as e:
+            logger.error(f"Error storing AI interaction: {str(e)}", exc_info=True)
+            return False
     
     async def log_interaction(self, user_id, guild_id, channel_id, model, prompt, response, 
                               tokens_used=None, execution_time=None, metadata=None):
@@ -40,9 +74,11 @@ class AIInteractionLogger:
             execution_time (float, optional): Time taken to generate the response
             metadata (dict, optional): Additional metadata
         """
+        logger.debug(f"Logging AI interaction for user {user_id} in guild {guild_id}, channel {channel_id} with model {model}.")
         try:
             # Generate a unique ID for this interaction
             interaction_id = str(uuid.uuid4())
+            logger.debug(f"Generated interaction ID: {interaction_id}")
             
             # Prepare the interaction data
             interaction_data = {
@@ -56,17 +92,18 @@ class AIInteractionLogger:
                 'timestamp': datetime.now().isoformat(),
                 'tokens_used': tokens_used,
                 'execution_time': execution_time,
-                'metadata': json.dumps(metadata) if metadata else None
+                'metadata': metadata
             }
+            logger.debug("Prepared interaction data dictionary.")
             
-            # Store in database using the queue to prevent concurrent access issues
-            await self.db.queue.execute(lambda: self.db.store_ai_interaction(interaction_data))
-            logger.debug(f"Logged AI interaction {interaction_id} from user {user_id}")
-            
+            # Store in database
+            logger.debug(f"Storing interaction {interaction_id} in database.")
+            await self.db.store_ai_interaction(interaction_data)
+            logger.debug(f"Interaction {interaction_id} stored successfully.")
             return interaction_id
             
         except Exception as e:
-            logger.error(f"Error logging AI interaction: {e}", exc_info=True)
+            logger.error(f"Error logging AI interaction: {str(e)}", exc_info=True)
             return None
     
     async def get_interaction(self, interaction_id):
@@ -79,11 +116,13 @@ class AIInteractionLogger:
         Returns:
             dict: The interaction data or None if not found
         """
+        logger.debug(f"Retrieving AI interaction with ID: {interaction_id}")
         try:
-            # Use the queue to prevent concurrent access issues
-            return await self.db.queue.execute(lambda: self.db.get_ai_interaction(interaction_id))
+            result = await self.db.get_ai_interaction(interaction_id)
+            logger.debug(f"Retrieved interaction {interaction_id}. Found: {result is not None}")
+            return result
         except Exception as e:
-            logger.error(f"Error retrieving AI interaction: {e}", exc_info=True)
+            logger.error(f"Error retrieving AI interaction {interaction_id}: {str(e)}", exc_info=True)
             return None
     
     async def get_user_interactions(self, user_id, limit=100, offset=0):
@@ -98,15 +137,36 @@ class AIInteractionLogger:
         Returns:
             list: List of interaction data
         """
+        logger.debug(f"Retrieving AI interactions for user {user_id} with limit={limit}, offset={offset}.")
         try:
-            # Use the queue to prevent concurrent access issues
-            return await self.db.queue.execute(
-                lambda: self.db.get_user_ai_interactions(user_id, limit, offset)
-            )
+            results = await self.db.get_user_ai_interactions(user_id, limit, offset)
+            logger.debug(f"Retrieved {len(results)} interactions for user {user_id}.")
+            return results
         except Exception as e:
-            logger.error(f"Error retrieving user AI interactions: {e}", exc_info=True)
+            logger.error(f"Error retrieving user AI interactions for {user_id}: {str(e)}", exc_info=True)
             return []
     
     def close(self):
         """Close the database connection"""
-        self.db.close()
+        logger.debug("Closing AIInteractionLogger database connection.")
+        try:
+            # We don't close the DB here since it might be shared
+            # self.db.close()
+            logger.debug("AIInteractionLogger database connection not closed (may be shared).")
+        except Exception as e:
+            logger.error(f"Error with AIInteractionLogger database: {str(e)}", exc_info=True)
+            
+    async def process_message_edit(self, before, after):
+        """
+        Process a message edit event (stub method for compatibility).
+        
+        Args:
+            before: Message before edit
+            after: Message after edit
+            
+        Returns:
+            bool: Always returns True
+        """
+        logger.debug(f"process_message_edit called on AIInteractionLogger (stub method)")
+        # This is a stub method to prevent errors when this object is used in place of MessageMonitor
+        return True

@@ -17,7 +17,7 @@ asyncio>=3.4.3
 psutil>=5.9.5
 PyYAML>=6.0.1
 # Dashboard requirements
-flask>=2.3.0
+flask[async]>=2.3.0 # Added async extra
 flask-cors>=4.0.0
 dash>=2.14.0
 dash-bootstrap-components>=1.5.0
@@ -33,3 +33,4 @@ itsdangerous>=2.1.2
 numpy>=1.26.0
 werkzeug>=2.3.0
 gunicorn>=21.2.0  # For production deployment
+waitress>=2.1.2   # WSGI server for production

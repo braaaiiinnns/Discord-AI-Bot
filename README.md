@@ -79,23 +79,47 @@ The bot can be easily deployed using Docker for better isolation and persistence
    DISCORD_CLIENT_SECRET=your_discord_client_secret
    DASHBOARD_PORT=8050  # Optional, defaults to 8050
    ```
-3. Build and start the Docker container:
+3. Run the pre-docker script to prepare your local configuration files:
+   ```bash
+   ./pre-docker.sh
+   ```
+4. (Optional) Edit the configuration files in the `./data` directory as needed
+5. Build and start the Docker container:
    ```bash
    docker-compose up -d --build
    ```
-4. To view the logs:
+6. To view the logs:
    ```bash
    docker-compose logs -f
    ```
-5. To stop the bot:
+7. To stop the bot:
    ```bash
    docker-compose down
    ```
 
 Data Persistence:
-- All bot data is stored in Docker volumes (`discord_bot_data` and `discord_bot_logs`)
+- All bot data is stored in volumes and persisted in your local `./data` directory
 - This ensures your data persists across container restarts and updates
-- To completely reset data, you can remove the volumes:
+- To completely reset data, you can remove the local data directory:
   ```bash
-  docker-compose down -v
+  rm -rf ./data
   ```
+
+## Configuration Files
+
+The bot uses several JSON configuration files stored in the `/data` directory:
+
+- `tasks.json`: Stores scheduled tasks
+- `premium_roles.json`: Defines premium roles for servers
+- `message_listeners.json`: Contains message trigger configurations
+- `previous_role_colors.json`: Stores role color history
+- `role_color_cycles.json`: Defines role color cycling configurations
+
+### Docker Configuration
+
+When running in Docker:
+1. If these files exist in your local `/data` directory, they will be used
+2. If they don't exist, empty default structures will be created automatically
+3. Any changes made to these files will persist between container restarts
+
+This approach allows you to keep default configurations in version control while ensuring no sensitive data is included in your repository.

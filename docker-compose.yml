@@ -14,30 +14,12 @@ services:
       - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
       - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET}
     volumes:
-      # Use named volumes for all data persistence
-      - discord_bot_db:/app/data/db
-      - discord_bot_files:/app/data/files
-      - discord_bot_flask_session:/app/data/flask_session
-      - discord_bot_static:/app/data/static
-      # Mount json config files directly
-      - ./data/tasks.json:/app/data/tasks.json
-      - ./data/message_listeners.json:/app/data/message_listeners.json
-      - ./data/premium_roles.json:/app/data/premium_roles.json
-      - ./data/previous_role_colors.json:/app/data/previous_role_colors.json
-      - ./data/role_color_cycles.json:/app/data/role_color_cycles.json
+      - ./data:/app/data
       - discord_bot_logs:/app/logs
     ports:
       - "${DASHBOARD_PORT:-8050}:8050"
 
 # Define named volumes for data persistence
 volumes:
-  discord_bot_db:
-    driver: local
-  discord_bot_files:
-    driver: local
-  discord_bot_flask_session:
-    driver: local
-  discord_bot_static:
-    driver: local
   discord_bot_logs:
     driver: local

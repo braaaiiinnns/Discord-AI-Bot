@@ -33,22 +33,6 @@ if [ -d "/app/data/static" ] && [ -z "$(ls -A /app/data/static 2>/dev/null)" ]; 
   cp -r /app/data_init/static/* /app/data/static/ 2>/dev/null || true\n\
 fi\n\
 \n\
-# Copy other data directories if they exist and are empty\n\
-if [ -d "/app/data/db" ] && [ -z "$(ls -A /app/data/db 2>/dev/null)" ]; then\n\
-  echo "Copying database files to volume..."\n\
-  cp -r /app/data_init/db/* /app/data/db/ 2>/dev/null || true\n\
-fi\n\
-\n\
-if [ -d "/app/data/files" ] && [ -z "$(ls -A /app/data/files 2>/dev/null)" ]; then\n\
-  echo "Copying files to volume..."\n\
-  cp -r /app/data_init/files/* /app/data/files/ 2>/dev/null || true\n\
-fi\n\
-\n\
-if [ -d "/app/data/flask_session" ] && [ -z "$(ls -A /app/data/flask_session 2>/dev/null)" ]; then\n\
-  echo "Copying flask session files to volume..."\n\
-  cp -r /app/data_init/flask_session/* /app/data/flask_session/ 2>/dev/null || true\n\
-fi\n\
-\n\
 # Start the main application\n\
 exec "$@"' > /app/entrypoint.sh
 

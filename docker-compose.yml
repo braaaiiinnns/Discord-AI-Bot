@@ -14,13 +14,12 @@ services:
       - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
       - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET}
     volumes:
-      # Use more specific volume mounts to preserve static files
+      # Use named volumes for all data persistence
       - discord_bot_db:/app/data/db
       - discord_bot_files:/app/data/files
       - discord_bot_flask_session:/app/data/flask_session
+      - discord_bot_static:/app/data/static
       - discord_bot_logs:/app/logs
-      # Mount the static files directly from local to container
-      - ./data/static:/app/data/static
     ports:
       - "${DASHBOARD_PORT:-8050}:8050"
 
@@ -31,6 +30,8 @@ volumes:
   discord_bot_files:
     driver: local
   discord_bot_flask_session:
+    driver: local
+  discord_bot_static:
     driver: local
   discord_bot_logs:
     driver: local

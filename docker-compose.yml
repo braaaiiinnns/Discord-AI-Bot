@@ -19,6 +19,12 @@ services:
       - discord_bot_files:/app/data/files
       - discord_bot_flask_session:/app/data/flask_session
       - discord_bot_static:/app/data/static
+      # Mount json config files directly
+      - ./data/tasks.json:/app/data/tasks.json
+      - ./data/message_listeners.json:/app/data/message_listeners.json
+      - ./data/premium_roles.json:/app/data/premium_roles.json
+      - ./data/previous_role_colors.json:/app/data/previous_role_colors.json
+      - ./data/role_color_cycles.json:/app/data/role_color_cycles.json
       - discord_bot_logs:/app/logs
     ports:
       - "${DASHBOARD_PORT:-8050}:8050"

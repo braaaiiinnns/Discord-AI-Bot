@@ -16,16 +16,14 @@ if __name__ == "__main__":
     # Start Discord bot in the main thread
     bot = None
     try:
+        print("Initializing bot...")
         bot = DiscordBot()
+        print("Running bot...")
+        # bot.run() is blocking and will handle cleanup internally
         bot.run()
+        print("Bot execution finished.")
     except KeyboardInterrupt:
-        print("Bot shutting down...")
+        print("\nBot shutting down via KeyboardInterrupt...")
     except Exception as e:
-        print(f"Error starting bot: {e}")
-    finally:
-        # Clean up resources if bot was initialized
-        if bot is not None:
-            try:
-                bot.cleanup()
-            except Exception as e:
-                print(f"Error during cleanup: {e}")
+        print(f"Error during bot execution: {e}")
+        logging.exception("Error during bot execution:")

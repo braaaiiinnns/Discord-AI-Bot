@@ -14,8 +14,59 @@ from typing import List, Dict, Any, Optional, Union, Callable
 from queue import Queue, Empty
 from threading import Thread, Lock
 from config.config import FILES_DIRECTORY # Import FILES_DIRECTORY
+import time
 
 logger = logging.getLogger('discord_bot')
+
+# Store database connections per thread
+thread_local = threading.local()
+
+# Add a connection pool
+class ConnectionPool:
+    def __init__(self, db_path: str, max_connections: int = 5):
+        self.db_path = db_path
+        self.max_connections = max_connections
+        self.connections = []
+        self.in_use = set()
+        self.lock = asyncio.Lock()
+        
+    async def get_connection(self):
+        async with self.lock:
+            # Check if there's an available connection
+            available = [conn for conn in self.connections if conn not in self.in_use]
+            if available:
+                conn = available[0]
+                self.in_use.add(conn)
+                return conn
+                
+            # Create a new connection if below the limit
+            if len(self.connections) < self.max_connections:
+                conn = sqlite3.connect(self.db_path)
+                conn.row_factory = sqlite3.Row
+                self.connections.append(conn)
+                self.in_use.add(conn)
+                return conn
+                
+            # Wait for a connection to become available
+            while True:
+                await asyncio.sleep(0.1)
+                available = [conn for conn in self.connections if conn not in self.in_use]
+                if available:
+                    conn = available[0]
+                    self.in_use.add(conn)
+                    return conn
+    
+    async def release_connection(self, conn):
+        async with self.lock:
+            if conn in self.in_use:
+                self.in_use.remove(conn)
+    
+    async def close_all(self):
+        async with self.lock:
+            for conn in self.connections:
+                conn.close()
+            self.connections = []
+            self.in_use = set()
 
 class DatabaseQueue:
     """Thread-safe queue for database operations to prevent concurrent access issues with SQLite."""
@@ -108,43 +159,43 @@ class DatabaseQueue:
 
 class UnifiedDatabase:
     """
-    A unified database handler that manages both Discord messages and AI interactions
-    in a single SQLite database file, with encryption support.
+    Unified database for message storage and AI interactions storage.
+    Uses a single SQLite database with multiple tables.
     """
     
-    def __init__(self, db_path, encryption_key, create_tables=True):
+    def __init__(self, db_path: str, encryption_key: str = None, create_tables: bool = True):
         """
-        Initialize the database connection.
+        Initialize the database.
         
         Args:
-            db_path (str): Path to the SQLite database file
-            encryption_key (str): Key used for encrypting sensitive data
+            db_path (str): Path to the database file
+            encryption_key (str, optional): Encryption key for sensitive data
             create_tables (bool): Whether to create tables if they don't exist
         """
-        logger.info(f"Initializing UnifiedDatabase with db_path: {db_path}")
         self.db_path = db_path
         self.encryption_key = encryption_key
-        self.conn = None
-        self.local_storage = threading.local()
-        self.files_dir = FILES_DIRECTORY
-        self.client = None  # Discord client reference for additional context
+        self.track_bot_messages = True  # Set to False to skip logging bot messages
+        self.discord_client = None
+        self.connection_pool = ConnectionPool(db_path, max_connections=10)
         
-        logger.debug(f"Ensuring database directory exists: {os.path.dirname(db_path)}")
+        # Create database directory if it doesn't exist
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        logger.debug(f"Ensuring files directory exists: {self.files_dir}")
-        os.makedirs(self.files_dir, exist_ok=True)
         
-        logger.debug("Connecting to database in main thread...")
-        self._connect()
-        logger.debug("Main thread database connection established.")
+        # Store whether to create tables for later async initialization
+        self.should_create_tables = create_tables
         
-        self.queue = DatabaseQueue(max_workers=1)
+    async def initialize(self):
+        """Asynchronously initialize the database."""
+        if self.should_create_tables:
+            await self._create_tables()
         
-        if create_tables:
-            logger.debug("Creating database tables if they don't exist...")
-            self._create_tables()
-            logger.debug("Table creation process finished.")
-        logger.info("UnifiedDatabase initialized.")
+    async def _get_connection(self):
+        """Get a connection from the pool"""
+        return await self.connection_pool.get_connection()
+        
+    async def _release_connection(self, conn):
+        """Release a connection back to the pool"""
+        await self.connection_pool.release_connection(conn)
     
     def _connect(self):
         """Establish a connection to the database."""
@@ -168,15 +219,7 @@ class UnifiedDatabase:
             logger.error(f"Failed to connect to database for thread {thread_name}: {e}", exc_info=True)
             raise
     
-    def _get_connection(self):
-        """Get or create a connection for the current thread."""
-        thread_name = threading.current_thread().name
-        if not hasattr(self.local_storage, 'conn') or self.local_storage.conn is None:
-            logger.debug(f"Connection not found for thread {thread_name} in _get_connection. Creating one.")
-            return self._connect()
-        return self.local_storage.conn
-    
-    def cursor(self):
+    async def cursor(self):
         """
         Get a cursor from the current thread's database connection.
         
@@ -184,40 +227,27 @@ class UnifiedDatabase:
             sqlite3.Cursor: A database cursor
         """
         logger.debug("Getting database cursor from current connection.")
-        conn = self._get_connection()
+        conn = await self._get_connection()
         return conn.cursor()
     
-    def close(self):
-        """Close all database connections."""
-        logger.debug("Closing database connections.")
-        if self.conn:
-            logger.debug("Closing main thread connection.")
-            try:
-                self.conn.close()
-                self.conn = None
-                logger.debug("Main thread connection closed.")
-            except Exception as e:
-                logger.error(f"Error closing main thread connection: {e}", exc_info=True)
-        
-        if hasattr(self.local_storage, 'conn') and self.local_storage.conn:
-            thread_name = threading.current_thread().name
-            logger.debug(f"Closing thread-local connection for thread {thread_name}.")
-            try:
-                self.local_storage.conn.close()
-                delattr(self.local_storage, 'conn')
-                logger.debug(f"Thread-local connection closed for thread {thread_name}.")
-            except Exception as e:
-                logger.error(f"Error closing thread-local connection for {thread_name}: {e}", exc_info=True)
-        
-        self.queue.stop()
-        logger.debug("Database connections closed and queue stopped.")
-    
-    def _create_tables(self):
+    async def close(self):
+        """Close the database connection pool."""
+        logger.info("Closing database connection pool...")
+        try:
+            if hasattr(self, 'connection_pool') and self.connection_pool:
+                await self.connection_pool.close_all()
+                logger.info("Database connection pool closed.")
+            else:
+                logger.warning("Connection pool not found or already closed.")
+        except Exception as e:
+            logger.error(f"Error closing connection pool: {e}", exc_info=True)
+
+    async def _create_tables(self):
         """Create necessary tables if they don't exist."""
         logger.debug("Executing _create_tables.")
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            conn = await self._get_connection()
+            cursor = await self.cursor()
             
             logger.debug("Creating table: messages")
             cursor.execute('''
@@ -356,58 +386,69 @@ class UnifiedDatabase:
         Store a message in the database.
         
         Args:
-            message_data (dict): Message data to store
+            message_data (dict): Message data
             
         Returns:
             bool: Success status
         """
-        def _store_message_sync():
-            try:
-                logger.debug(f"Storing message {message_data['message_id']}.")
-                content_encrypted = encrypt_data(self.encryption_key, message_data['content'])
-                
-                attachments_encrypted = None
-                if 'attachments' in message_data and message_data['attachments']:
-                    attachments_json = message_data['attachments'] if isinstance(message_data['attachments'], str) else json.dumps(message_data['attachments'])
-                    attachments_encrypted = encrypt_data(self.encryption_key, attachments_json)
-                
-                metadata_encrypted = None
-                if 'metadata' in message_data and message_data['metadata']:
-                    metadata_json = message_data['metadata'] if isinstance(message_data['metadata'], str) else json.dumps(message_data['metadata'])
-                    metadata_encrypted = encrypt_data(self.encryption_key, metadata_json)
-                
-                conn = self._get_connection()
-                cursor = conn.cursor()
-                cursor.execute('''
-                INSERT OR REPLACE INTO messages (
-                    message_id, channel_id, guild_id, author_id, author_name,
-                    content_encrypted, timestamp, attachments_encrypted,
-                    message_type, is_bot, metadata_encrypted
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    message_data['message_id'],
-                    message_data['channel_id'],
-                    message_data['guild_id'],
-                    message_data['author_id'],
-                    message_data['author_name'],
-                    content_encrypted,
-                    message_data['timestamp'],
-                    attachments_encrypted,
-                    message_data['message_type'],
-                    message_data['is_bot'],
-                    metadata_encrypted
-                ))
-                
-                conn.commit()
-                logger.debug(f"Message {message_data['message_id']} stored successfully.")
+        try:
+            conn = await self._get_connection()
+            
+            # If the message is from a bot and we're not tracking bot messages, skip it
+            if message_data.get('is_bot', False) and not self.track_bot_messages:
+                await self._release_connection(conn)
                 return True
-            except Exception as e:
-                logger.error(f"Error storing message {message_data.get('message_id', 'N/A')}: {e}", exc_info=True)
-                conn = self._get_connection()
-                conn.rollback()
-                return False
-        
-        return await self.queue.execute(_store_message_sync)
+                
+            cursor = conn.cursor()
+            
+            # Use prepared statement for better security
+            cursor.execute('''
+            INSERT INTO messages (
+                message_id, channel_id, guild_id, author_id, author_name, 
+                content, timestamp, message_type, is_bot
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(message_id) DO UPDATE SET
+                content = excluded.content
+            ''', (
+                message_data['message_id'],
+                message_data['channel_id'],
+                message_data['guild_id'],
+                message_data['author_id'],
+                message_data['author_name'],
+                message_data['content'],
+                message_data['timestamp'],
+                message_data['message_type'],
+                message_data['is_bot']
+            ))
+            
+            # Insert attachments if any
+            if 'attachments' in message_data and message_data['attachments']:
+                for attachment in message_data['attachments']:
+                    cursor.execute('''
+                    INSERT INTO attachments (
+                        attachment_id, message_id, filename, url, 
+                        proxy_url, size, height, width, content_type
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(attachment_id) DO NOTHING
+                    ''', (
+                        attachment['id'],
+                        message_data['message_id'],
+                        attachment['filename'],
+                        attachment['url'],
+                        attachment['proxy_url'],
+                        attachment['size'],
+                        attachment['height'] or 0,
+                        attachment['width'] or 0,
+                        attachment.get('content_type', '')
+                    ))
+            
+            conn.commit()
+            await self._release_connection(conn)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error storing message {message_data.get('message_id', 'unknown')}: {e}", exc_info=True)
+            return False
             
     async def store_message_files(self, message_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -507,36 +548,39 @@ class UnifiedDatabase:
         Returns:
             bool: Success status
         """
-        def _store_file_metadata_sync():
-            try:
-                metadata_encrypted = None
-                if metadata:
-                    metadata_json = metadata if isinstance(metadata, str) else json.dumps(metadata)
-                    metadata_encrypted = encrypt_data(self.encryption_key, metadata_json)
-                    
-                conn = self._get_connection()
-                cursor = conn.cursor()
-                cursor.execute('''
-                INSERT OR REPLACE INTO files (
-                    file_id, message_id, channel_id, guild_id, author_id, 
-                    original_name, file_path, file_type, file_size, file_hash, 
-                    original_url, timestamp, metadata_encrypted
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    file_id, message_id, channel_id, guild_id, author_id,
-                    original_name, file_path, file_type, file_size, file_hash,
-                    original_url, timestamp, metadata_encrypted
-                ))
-                conn.commit()
-                logger.debug(f"Stored metadata for file {original_name} ({file_id}).")
-                return True
-            except Exception as e:
-                logger.error(f"Error storing file metadata for {original_name} ({file_id}): {e}", exc_info=True)
-                conn = self._get_connection()
-                conn.rollback()
-                return False
+        try:
+            metadata_encrypted = None
+            if metadata:
+                metadata_json = metadata if isinstance(metadata, str) else json.dumps(metadata)
+                metadata_encrypted = encrypt_data(self.encryption_key, metadata_json)
                 
-        return await self.queue.execute(_store_file_metadata_sync)
+            conn = await self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+            INSERT OR REPLACE INTO files (
+                file_id, message_id, channel_id, guild_id, author_id, 
+                original_name, file_path, file_type, file_size, file_hash, 
+                original_url, timestamp, metadata_encrypted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                file_id, message_id, channel_id, guild_id, author_id,
+                original_name, file_path, file_type, file_size, file_hash,
+                original_url, timestamp, metadata_encrypted
+            ))
+            conn.commit()
+            await self._release_connection(conn)
+            logger.debug(f"Stored metadata for file {original_name} ({file_id}).")
+            return True
+        except Exception as e:
+            logger.error(f"Error storing file metadata for {original_name} ({file_id}): {e}", exc_info=True)
+            # Try to rollback and release connection if it exists
+            try:
+                if 'conn' in locals():
+                    conn.rollback()
+                    await self._release_connection(conn)
+            except:
+                pass
+            return False
     
     async def store_message_edit(self, edit_data: Dict[str, Any]) -> bool:
         """
@@ -1301,7 +1345,7 @@ class UnifiedDatabase:
 
     def set_discord_client(self, client):
         """Set a reference to the Discord client for additional context"""
-        self.client = client
+        self.discord_client = client
         logger.debug("Discord client reference set in database.")
     
     async def get_dashboard_summary(self, filter_criteria: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -1499,9 +1543,9 @@ class UnifiedDatabase:
                 stats["active_users"] = [{"username": row[0], "message_count": row[1]} for row in cursor.fetchall()]
                 
                 # If we have a Discord client reference, try to get role information
-                if guild_id and self.client:
+                if guild_id and self.discord_client:
                     try:
-                        guild = self.client.get_guild(int(guild_id))
+                        guild = self.discord_client.get_guild(int(guild_id))
                         if guild:
                             role_counts = {}
                             for member in guild.members:

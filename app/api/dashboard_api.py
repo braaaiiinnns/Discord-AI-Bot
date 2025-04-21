@@ -19,6 +19,9 @@ from config.config import (
     PREVIOUS_ROLE_COLORS_FILE, ROLE_COLOR_CYCLES_FILE,
     TASKS_FILE
 )
+import asyncio
+import time
+from .app import app
 
 # Set up logger
 logger = setup_logger('discord_bot.api.dashboard')
@@ -33,16 +36,67 @@ CORS(dashboard_bp)
 bot_instance = None
 data_service = None
 
-def initialize(bot):
-    """Initialize the API with a reference to the bot instance"""
-    global bot_instance, data_service
-    bot_instance = bot
-    if hasattr(bot, 'message_monitor') and bot.message_monitor:
-        data_service = APIDataService(bot.message_monitor.get_database())
-    else:
+async def initialize(bot):
+    """
+    Initialize the API with a reference to the bot instance
+    
+    Args:
+        bot: The bot instance to use for accessing the database
+    """
+    # Store the data service (ensure proper message_monitor access)
+    data_service = None
+    max_retries = 3
+    retry_delay = 1  # seconds
+    success = False
+    
+    for attempt in range(max_retries):
+        try:
+            if bot and hasattr(bot, 'message_monitor') and bot.message_monitor:
+                logger.info(f"Dashboard API: Attempt {attempt+1}/{max_retries}: Message monitor found on bot instance")
+                db = bot.message_monitor.get_database()
+                
+                if db:
+                    logger.info("Dashboard API: Successfully obtained database connection")
+                    data_service = APIDataService(db)
+                    
+                    # Test the connection to ensure it's working
+                    if await data_service.test_connection():
+                        logger.info("Dashboard API: Database connection test successful")
+                        success = True
+                        break
+                    else:
+                        logger.warning(f"Dashboard API: Attempt {attempt+1}/{max_retries}: Database connection test failed")
+                else:
+                    logger.warning(f"Dashboard API: Attempt {attempt+1}/{max_retries}: Database connection is None")
+            else:
+                logger.warning(f"Dashboard API: Attempt {attempt+1}/{max_retries}: Message monitor not available")
+            
+            # Wait before retrying
+            if attempt < max_retries - 1:
+                logger.info(f"Dashboard API: Waiting {retry_delay} seconds before next attempt...")
+                await asyncio.sleep(retry_delay)
+        except Exception as e:
+            logger.error(f"Dashboard API: Error during attempt {attempt+1}/{max_retries} to access database: {e}", exc_info=True)
+            if attempt < max_retries - 1:
+                logger.info(f"Dashboard API: Waiting {retry_delay} seconds before next attempt...")
+                await asyncio.sleep(retry_delay)
+    
+    if not success:
+        # Log detailed diagnostic information
+        if not bot:
+            logger.warning("Dashboard API: Bot instance is None")
+        elif not hasattr(bot, 'message_monitor'):
+            logger.warning("Dashboard API: Bot instance does not have message_monitor attribute")
+        elif not bot.message_monitor:
+            logger.warning("Dashboard API: Bot instance has message_monitor attribute but it's None")
+        else:
+            logger.warning("Dashboard API: Message monitor exists but database access failed after multiple attempts")
+        
         data_service = None
-        logger.warning("Message monitor not found. Data service endpoints might fail.")
-    logger.info("API initialized with bot instance")
+        logger.warning("Dashboard API: Data service not initialized. API endpoints will use mock data.")
+    
+    app.config['DATA_SERVICE'] = data_service
+    logger.info(f"Dashboard API initialized. Data service available: {success}")
 
 # --- Existing Endpoints (under /api/dashboard/) ---
 # Note: Routes are adjusted to be under /api/dashboard/

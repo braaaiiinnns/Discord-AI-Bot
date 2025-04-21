@@ -146,15 +146,19 @@ class AIInteractionLogger:
             logger.error(f"Error retrieving user AI interactions for {user_id}: {str(e)}", exc_info=True)
             return []
     
-    def close(self):
-        """Close the database connection"""
-        logger.debug("Closing AIInteractionLogger database connection.")
+    async def close(self):
+        """Close the database connection if this instance owns it."""
+        # The decision logic is handled in DiscordBot.cleanup
+        # This method is called only if this instance is responsible for closing.
+        logger.debug("Attempting to close AIInteractionLogger database connection...")
         try:
-            # We don't close the DB here since it might be shared
-            # self.db.close()
-            logger.debug("AIInteractionLogger database connection not closed (may be shared).")
+            if hasattr(self, 'db') and self.db:
+                await self.db.close()
+                logger.debug("AIInteractionLogger database connection closed.")
+            else:
+                logger.debug("AIInteractionLogger has no database connection to close.")
         except Exception as e:
-            logger.error(f"Error with AIInteractionLogger database: {str(e)}", exc_info=True)
+            logger.error(f"Error closing AIInteractionLogger database: {e}", exc_info=True)
             
     async def process_message_edit(self, before, after):
         """

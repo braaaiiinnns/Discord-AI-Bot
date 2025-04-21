@@ -27,6 +27,10 @@ class AICogCommands(commands.Cog):
         self.claude_client = None
         self.grok_client = None
         
+        # Response cache to avoid regenerating identical responses
+        self.response_cache = {}
+        self.cache_max_size = 50
+        
         # Create the ask command group for app_commands
         self.ask_group = app_commands.Group(name="ask", description="Ask various AI models")
         
@@ -168,14 +172,29 @@ class AICogCommands(commands.Cog):
         context = user_state.get_context()
         
         try:
-            # Record start time for performance tracking
-            start_time = time.time()
-            
-            # Generate response using the appropriate strategy
-            result = await strategy.generate_response(context, system_prompt)
-            
-            # Calculate execution time
-            execution_time = time.time() - start_time
+            # Check if we have a cached response for this exact prompt and context
+            cache_key = f"{model_name}:{prompt}:{len(context)}"
+            if cache_key in self.response_cache:
+                self.logger.debug(f"Using cached response for {cache_key}")
+                result = self.response_cache[cache_key]
+                execution_time = 0.0  # No execution time for cached responses
+            else:
+                # Record start time for performance tracking
+                start_time = time.time()
+                
+                # Generate response using the appropriate strategy
+                result = await strategy.generate_response(context, system_prompt)
+                
+                # Calculate execution time
+                execution_time = time.time() - start_time
+                
+                # Cache the response
+                self.response_cache[cache_key] = result
+                # Manage cache size
+                if len(self.response_cache) > self.cache_max_size:
+                    # Remove a random key to prevent staleness patterns
+                    keys = list(self.response_cache.keys())
+                    del self.response_cache[keys[0]]
             
             # Update user state with the assistant's response
             user_state.add_prompt("assistant", result)

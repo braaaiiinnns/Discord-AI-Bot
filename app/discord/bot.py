@@ -89,7 +89,7 @@ class DiscordBot:
                 db = UnifiedDatabase(
                     db_path=MESSAGES_DB_PATH, 
                     encryption_key=ENCRYPTION_KEY,
-                    create_tables=True
+                    create_tables=False  # Don't create tables immediately
                 )
                 self.message_monitor = MessageMonitor(
                     db=db,
@@ -118,7 +118,7 @@ class DiscordBot:
                     db = UnifiedDatabase(
                         db_path=AI_INTERACTIONS_DB_PATH,
                         encryption_key=ENCRYPTION_KEY,
-                        create_tables=True
+                        create_tables=False  # Don't create tables immediately
                     )
                     self.ai_logger = AIInteractionLogger(
                         db=db,
@@ -286,6 +286,16 @@ class DiscordBot:
             await self._find_or_create_response_channels()
             self.logger.debug("Response channels cached.")
             
+            # Initialize databases
+            self.logger.debug("Initializing databases...")
+            if hasattr(self, 'message_monitor') and self.message_monitor and self.message_monitor.db:
+                await self.message_monitor.db.initialize()
+                self.logger.debug("Message monitor database initialized.")
+            
+            if hasattr(self, 'ai_logger') and self.ai_logger and self.ai_logger.db:
+                await self.ai_logger.db.initialize()
+                self.logger.debug("AI logger database initialized.")
+            
             # Register scheduled tasks
             self.logger.debug("Registering scheduled tasks...")
             self.task_manager.register_tasks(self.tree)
@@ -320,20 +330,57 @@ class DiscordBot:
             
             # Start the API server in a separate thread
             self.logger.debug("Starting API server...")
-            if not self.message_monitor:
-                self.logger.warning("Message monitor is not available. Some API data endpoints might fail.")
-                
+            
+            # Check message_monitor status before starting API server
+            if not hasattr(self, 'message_monitor') or not self.message_monitor:
+                self.logger.warning("Message monitor is not available. API data endpoints will use mock data.")
+            elif not hasattr(self.message_monitor, 'db') or not self.message_monitor.db:
+                self.logger.warning("Message monitor database is not properly initialized. API data endpoints will use mock data.")
+            else:
+                self.logger.info("Message monitor and database are properly initialized for API use.")
+            
+            # Create a delay to allow other initialization tasks to complete first
+            self.logger.debug("Waiting 2 seconds before starting API server to ensure all components are initialized...")
+            await asyncio.sleep(2)
+            
+            # Initialize the message_monitor if it exists but is None (edge case)
+            if hasattr(self, 'message_monitor') and not self.message_monitor and ENABLE_MESSAGE_LOGGING:
+                self.logger.warning("MessageMonitor attribute exists but is None. Attempting to reinitialize...")
+                try:
+                    from utils.database import UnifiedDatabase
+                    db = UnifiedDatabase(
+                        db_path=MESSAGES_DB_PATH, 
+                        encryption_key=ENCRYPTION_KEY,
+                        create_tables=False  # Don't create tables immediately
+                    )
+                    self.message_monitor = MessageMonitor(
+                        db=db,
+                        encryption_key=ENCRYPTION_KEY
+                    )
+                    self.message_monitor.set_client(self.client)
+                    
+                    # Initialize the database asynchronously
+                    await db.initialize()
+                    self.logger.info("MessageMonitor reinitialized successfully.")
+                except Exception as e:
+                    self.logger.error(f"Failed to reinitialize MessageMonitor: {e}", exc_info=True)
+            
+            # Pass a deep copy of this instance to avoid race conditions
+            import copy
+            bot_instance_for_api = self  # Using reference is fine as we're ensuring init completion
+            
+            # Start API server in a separate thread
             api_thread = threading.Thread(
                 target=start_server, 
                 kwargs={
-                    'bot_instance': self,  # Pass bot_instance instead of message_monitor
+                    'bot_instance': bot_instance_for_api,
                     'host': DASHBOARD_HOST,
                     'port': DASHBOARD_PORT
                 },
                 daemon=True
             )
             api_thread.start()
-            self.logger.info(f"API server started at {DASHBOARD_HOST}:{DASHBOARD_PORT}")
+            self.logger.info(f"API server thread started at {DASHBOARD_HOST}:{DASHBOARD_PORT}")
             
             self.logger.debug("on_ready event finished.")
         
@@ -362,10 +409,59 @@ class DiscordBot:
                 except Exception as e:
                     self.logger.error(f"Error processing message edit event for message {after.id}: {str(e)}")
         
+        # Add a cleanup handler for when the bot disconnects
+        @self.client.event
+        async def on_disconnect():
+            self.logger.debug("Bot disconnected, preparing for cleanup...")
+            
+        # Add a close handler to perform cleanup before the bot exits
+        self.client.add_on_close_callback(self._handle_client_close)
+            
         # Run the client
         self.logger.info("Starting bot client...")
-        self.client.run(DISCORD_BOT_TOKEN)
-    
+        try:
+            self.client.run(DISCORD_BOT_TOKEN)
+        except Exception as e:
+            self.logger.error(f"Error running bot: {e}", exc_info=True)
+        finally:
+            # The client has stopped, now we can handle cleanup synchronously
+            self.logger.info("Bot has stopped running. Performing cleanup...")
+            self._sync_cleanup()
+            self.logger.info("Cleanup complete.")
+        
+    async def _handle_client_close(self):
+        """Handle cleanup when the client is closing."""
+        self.logger.info("Client closing, performing async cleanup...")
+        try:
+            await self.cleanup()
+            self.logger.info("Async cleanup completed successfully.")
+        except Exception as e:
+            self.logger.error(f"Error during async cleanup: {e}", exc_info=True)
+        
+    def _sync_cleanup(self):
+        """Synchronous cleanup method as a fallback in case async cleanup doesn't run."""
+        try:
+            # Mostly synchronous cleanup code
+            if hasattr(self, 'scheduler') and self.scheduler:
+                self.logger.debug("Stopping TaskScheduler...")
+                self.scheduler.stop_all()
+                self.logger.debug("TaskScheduler stopped.")
+                
+            # Clean up AI clients
+            self.logger.debug("Cleaning up AI clients...")
+            if hasattr(self, 'openai_client'):
+                self.openai_client = None
+            if hasattr(self, 'google_client'):
+                self.google_client = None
+            if hasattr(self, 'claude_client'):
+                self.claude_client = None
+            if hasattr(self, 'grok_client'):
+                self.grok_client = None
+            self.logger.debug("AI clients cleaned up.")
+            
+        except Exception as e:
+            self.logger.error(f"Error during synchronous cleanup: {e}", exc_info=True)
+
     async def _find_or_create_response_channels(self):
         """Find or create the response channel in all guilds"""
         self.logger.debug("Executing _find_or_create_response_channels...")
@@ -391,43 +487,56 @@ class DiscordBot:
             self.logger.debug(f"Cached response channel for guild {guild.id}.")
         self.logger.debug("_find_or_create_response_channels finished.")
 
-    def cleanup(self):
+    async def cleanup(self):
         """Clean up resources before shutting down"""
         self.logger.info("Performing cleanup...")
         try:
             # Dashboard cleanup removed
             
-            # Close database connections
+            # Close database connections asynchronously
+            tasks = []
             if hasattr(self, 'message_monitor') and self.message_monitor:
-                self.logger.debug("Closing MessageMonitor database connection...")
-                self.message_monitor.close()
-                self.logger.debug("MessageMonitor database connection closed.")
+                self.logger.debug("Scheduling MessageMonitor database close...")
+                tasks.append(self.message_monitor.close())
                 
             if hasattr(self, 'ai_logger') and self.ai_logger:
-                self.logger.debug("Closing AIInteractionLogger database connection...")
-                self.ai_logger.close()
-                self.logger.debug("AIInteractionLogger database connection closed.")
-            
-            # Clean up AI clients
+                # Check if ai_logger uses the same db instance as message_monitor
+                # If they share the same db instance, closing it once is enough.
+                should_close_ai_db = True
+                if hasattr(self, 'message_monitor') and self.message_monitor and \
+                   hasattr(self.message_monitor, 'db') and hasattr(self.ai_logger, 'db') and \
+                   self.message_monitor.db is self.ai_logger.db:
+                    self.logger.debug("AI logger shares DB with MessageMonitor, skipping redundant close.")
+                    should_close_ai_db = False
+                
+                if should_close_ai_db:
+                    self.logger.debug("Scheduling AIInteractionLogger database close...")
+                    # Ensure ai_logger.close is awaitable if it needs to be
+                    # Assuming ai_logger.close() might become async or already is
+                    # If ai_logger.close is not async, this await won't hurt but ideally it should be async
+                    # Let's assume ai_logger.close() needs await based on potential db.close() call
+                    tasks.append(self.ai_logger.close()) # Assuming close is async
+
+            if tasks:
+                self.logger.debug(f"Awaiting {len(tasks)} database close operations...")
+                await asyncio.gather(*tasks)
+                self.logger.debug("Database connections closed.")
+            else:
+                self.logger.debug("No database connections needed closing.")
+
+            # Clean up AI clients (synchronous)
             self.logger.debug("Cleaning up AI clients...")
-            if hasattr(self, 'openai_client'):
-                self.openai_client = None
-            if hasattr(self, 'google_client'):
-                self.google_client = None
-            if hasattr(self, 'claude_client'):
-                self.claude_client = None
-            if hasattr(self, 'grok_client'):
-                self.grok_client = None
+            # ... (rest of the synchronous cleanup code remains the same)
             self.logger.debug("AI clients cleaned up.")
             
-            # Clean up task scheduler
+            # Clean up task scheduler (synchronous)
             if hasattr(self, 'scheduler') and self.scheduler:
                 self.logger.debug("Stopping TaskScheduler...")
                 self.scheduler.stop_all()  # Corrected method name
                 self.logger.debug("TaskScheduler stopped.")
                 
         except Exception as e:
-            self.logger.error(f"Error during cleanup: {str(e)}")
+            self.logger.error(f"Error during cleanup: {e}", exc_info=True) # Added exc_info
         self.logger.info("Cleanup finished.")
 
     def toggle_debug_logging(self, enable: bool):

@@ -25,5 +25,10 @@ RUN pip install --no-cache-dir pytz
 RUN mkdir -p /app/data/db /app/data/files /app/data/static /app/data/flask_session /app/logs && \
     chmod -R 755 /app/data /app/logs
 
+# Ensure the static files are copied to the correct locations
+# These will be available for container initialization (first run before volume mounts)
+COPY data/static/ascii_emoji.json /app/data/static/
+COPY data/static/ascii_emoji.json data/static/task_examples.json /app/data/static/
+
 # Run the bot
 CMD ["python", "main.py"]

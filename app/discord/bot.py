@@ -409,13 +409,19 @@ class DiscordBot:
                 except Exception as e:
                     self.logger.error(f"Error processing message edit event for message {after.id}: {str(e)}")
         
-        # Add a cleanup handler for when the bot disconnects
+        # Add a handler for cleanup when the bot is about to close
         @self.client.event
         async def on_disconnect():
             self.logger.debug("Bot disconnected, preparing for cleanup...")
-            
-        # Add a close handler to perform cleanup before the bot exits
-        self.client.add_on_close_callback(self._handle_client_close)
+        
+        @self.client.event
+        async def on_close():
+            self.logger.debug("Bot is closing, performing async cleanup...")
+            try:
+                await self.cleanup()
+                self.logger.info("Async cleanup completed successfully on close.")
+            except Exception as e:
+                self.logger.error(f"Error during async cleanup on close: {e}", exc_info=True)
             
         # Run the client
         self.logger.info("Starting bot client...")
@@ -424,8 +430,8 @@ class DiscordBot:
         except Exception as e:
             self.logger.error(f"Error running bot: {e}", exc_info=True)
         finally:
-            # The client has stopped, now we can handle cleanup synchronously
-            self.logger.info("Bot has stopped running. Performing cleanup...")
+            # The client has stopped, now we can handle synchronous cleanup as a fallback
+            self.logger.info("Bot has stopped running. Performing fallback cleanup...")
             self._sync_cleanup()
             self.logger.info("Cleanup complete.")
         

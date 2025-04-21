@@ -592,39 +592,41 @@ class UnifiedDatabase:
         Returns:
             bool: Success status
         """
-        def _store_message_edit_sync():
+        try:
+            logger.debug(f"Storing message edit for message {edit_data['message_id']}.")
+            original_content_encrypted = encrypt_data(self.encryption_key, edit_data['original_content'])
+            new_content_encrypted = encrypt_data(self.encryption_key, edit_data['new_content'])
+            
+            conn = await self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+            INSERT INTO message_edits (
+                message_id, channel_id, guild_id, author_id,
+                original_content_encrypted, new_content_encrypted, edit_timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                edit_data['message_id'],
+                edit_data['channel_id'],
+                edit_data['guild_id'],
+                edit_data['author_id'],
+                original_content_encrypted,
+                new_content_encrypted,
+                edit_data['edit_timestamp']
+            ))
+            
+            conn.commit()
+            await self._release_connection(conn)
+            logger.debug(f"Message edit for {edit_data['message_id']} stored successfully.")
+            return True
+        except Exception as e:
+            logger.error(f"Error storing message edit: {e}", exc_info=True)
             try:
-                logger.debug(f"Storing message edit for message {edit_data['message_id']}.")
-                original_content_encrypted = encrypt_data(self.encryption_key, edit_data['original_content'])
-                new_content_encrypted = encrypt_data(self.encryption_key, edit_data['new_content'])
-                
-                conn = self._get_connection()
-                cursor = conn.cursor()
-                cursor.execute('''
-                INSERT INTO message_edits (
-                    message_id, channel_id, guild_id, author_id,
-                    original_content_encrypted, new_content_encrypted, edit_timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    edit_data['message_id'],
-                    edit_data['channel_id'],
-                    edit_data['guild_id'],
-                    edit_data['author_id'],
-                    original_content_encrypted,
-                    new_content_encrypted,
-                    edit_data['edit_timestamp']
-                ))
-                
-                conn.commit()
-                logger.debug(f"Message edit for {edit_data['message_id']} stored successfully.")
-                return True
-            except Exception as e:
-                logger.error(f"Error storing message edit: {e}", exc_info=True)
-                conn = self._get_connection()
-                conn.rollback()
-                return False
-                
-        return await self.queue.execute(_store_message_edit_sync)
+                if 'conn' in locals():
+                    conn.rollback()
+                    await self._release_connection(conn)
+            except:
+                pass
+            return False
     
     async def store_channel(self, channel_data: Dict[str, Any]) -> bool:
         """

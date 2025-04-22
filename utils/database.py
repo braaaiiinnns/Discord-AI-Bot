@@ -423,22 +423,35 @@ class UnifiedDatabase:
                 
             cursor = conn.cursor()
             
+            # Encrypt the content before storing
+            content_encrypted = encrypt_data(self.encryption_key, message_data['content'])
+            
+            # Encrypt attachments if any
+            attachments_encrypted = None
+            if 'attachments' in message_data and message_data['attachments']:
+                if isinstance(message_data['attachments'], list):
+                    attachments_json = json.dumps(message_data['attachments'])
+                else:
+                    attachments_json = message_data['attachments']
+                attachments_encrypted = encrypt_data(self.encryption_key, attachments_json)
+                
             # Use prepared statement for better security
             cursor.execute('''
             INSERT INTO messages (
                 message_id, channel_id, guild_id, author_id, author_name, 
-                content, timestamp, message_type, is_bot
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                content_encrypted, timestamp, attachments_encrypted, message_type, is_bot
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(message_id) DO UPDATE SET
-                content = excluded.content
+                content_encrypted = excluded.content_encrypted
             ''', (
                 message_data['message_id'],
                 message_data['channel_id'],
                 message_data['guild_id'],
                 message_data['author_id'],
                 message_data['author_name'],
-                message_data['content'],
+                content_encrypted,
                 message_data['timestamp'],
+                attachments_encrypted,
                 message_data['message_type'],
                 message_data['is_bot']
             ))

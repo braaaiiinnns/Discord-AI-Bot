@@ -12,6 +12,9 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
+# Import the config file initialization function
+from tools.init_config_files import init_config_files
+
 # Import the bot class
 from app.discord.bot import DiscordBot
 
@@ -20,6 +23,15 @@ logger = logging.getLogger(__name__)
 
 def main():
     logger.debug("Starting main function...") # Add debug log
+    
+    # Initialize configuration files - this will delete directories that should be JSON files
+    logger.info("Initializing configuration files...")
+    try:
+        init_config_files()
+        logger.info("Configuration files initialized successfully")
+    except Exception as e:
+        logger.error(f"Error initializing configuration files: {e}", exc_info=True)
+    
     # Create and run the Discord bot
     bot = None
     try:

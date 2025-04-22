@@ -6,6 +6,7 @@ Run this before starting Docker to ensure all required files are present.
 import os
 import json
 import sys
+import shutil
 
 # Add the project root to the path so we can import from the app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -33,9 +34,9 @@ def init_config_files():
         file_path = os.path.join(data_dir, filename)
         
         if os.path.exists(file_path) and os.path.isdir(file_path):
-            # This is a directory instead of a file, so rename it
-            os.rename(file_path, f"{file_path}_backup_dir")
-            print(f"Renamed existing directory {filename} to {filename}_backup_dir")
+            # This is a directory instead of a file, so delete it
+            shutil.rmtree(file_path)
+            print(f"Deleted directory {filename} that was in place of expected JSON file")
         
         if not os.path.exists(file_path):
             # Create an empty JSON file with appropriate structure

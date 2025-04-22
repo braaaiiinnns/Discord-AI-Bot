@@ -9,10 +9,17 @@ import logging
 # Ensure we can import from our project directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Import the config file initialization function
+from tools.init_config_files import init_config_files
+
 # Import the bot class
 from app.discord.bot import DiscordBot
 
 if __name__ == "__main__":
+    # Initialize configuration files - this will delete directories that should be JSON files
+    print("Initializing configuration files...")
+    init_config_files()
+    
     # Start Discord bot in the main thread
     bot = None
     try:

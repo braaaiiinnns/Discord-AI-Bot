@@ -18,6 +18,28 @@ import time
 
 logger = logging.getLogger('discord_bot')
 
+# Add the missing get_db_path function
+def get_db_path(db_name: str) -> str:
+    """
+    Get the path for a database file.
+    
+    Args:
+        db_name: Name of the database file
+        
+    Returns:
+        Full path to the database file in the data/db directory
+    """
+    # Ensure the database name has .db extension
+    if not db_name.endswith('.db'):
+        db_name = f"{db_name}.db"
+        
+    # Create the database directory if it doesn't exist
+    db_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'db')
+    os.makedirs(db_dir, exist_ok=True)
+    
+    # Return the full path
+    return os.path.join(db_dir, db_name)
+
 # Store database connections per thread
 thread_local = threading.local()
 

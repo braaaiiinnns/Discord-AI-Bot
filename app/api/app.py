@@ -2,8 +2,7 @@ import os
 from flask import Flask
 from flask_cors import CORS
 import logging
-
-# Removed import of APIAuthManager
+from config.config import FLASK_SESSION_DIR
 
 # Set up logger
 logger = logging.getLogger('discord_bot.api')
@@ -11,19 +10,29 @@ logger = logging.getLogger('discord_bot.api')
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'default_secret_key_for_development')
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_FILE_DIR'] = FLASK_SESSION_DIR
+app.config['SESSION_PERMANENT'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30  # 30 days
+
+# Ensure session directory exists
+os.makedirs(FLASK_SESSION_DIR, exist_ok=True)
+
+# Initialize Flask-Session
+from flask_session import Session
+Session(app)
 
 # Enable CORS
-CORS(app, supports_credentials=True) # supports_credentials might not be needed without session cookies
-
-# Removed initialization of APIAuthManager and registration of its blueprint
+CORS(app, supports_credentials=True)
 
 # Import blueprints
 try:
     from .dashboard_api import dashboard_bp
+    from .auth_routes import auth_bp
     
     # Register blueprints
     app.register_blueprint(dashboard_bp)
-    # Removed registration of auth_manager.bp
+    app.register_blueprint(auth_bp, url_prefix='/auth')
     
     logger.info("Flask application initialized successfully with API blueprints")
 except Exception as e:

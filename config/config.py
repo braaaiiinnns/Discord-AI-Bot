@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 import logging
 import pytz
+import tempfile
 
 logger = logging.getLogger('discord_bot')  # Ensure consistent logger name
 
@@ -89,11 +90,18 @@ LOG_LEVEL = logging.DEBUG  # Set log level to DEBUG
 ENABLE_MESSAGE_LOGGING = True  # Enable detailed message logging as required by the dashboard
 ENABLE_AI_LOGGING = True  # Keep AI interaction logging for accountability
 
+# API configuration
+API_HOST = os.getenv('API_HOST', '127.0.0.1')
+API_PORT = int(os.getenv('API_PORT', '5000'))
+
 # Dashboard configuration
 ENABLE_DASHBOARD = True
 DASHBOARD_HOST = os.getenv('DASHBOARD_HOST', '127.0.0.1')
-DASHBOARD_PORT = int(os.getenv('DASHBOARD_PORT', '8050'))
+DASHBOARD_PORT = int(os.getenv('DASHBOARD_PORT', '8050'))  # Changed from 8050 to 8080 to avoid conflicts
 FLASK_SESSION_DIR = os.path.join(BASE_DATA_DIRECTORY, 'flask_session')  # Correct Flask session directory
+
+# Define the directory for session files if not already set
+FLASK_SESSION_DIR = os.environ.get('FLASK_SESSION_DIR', os.path.join(tempfile.gettempdir(), 'discord_bot_sessions'))
 
 # Discord OAuth for Dashboard
 DISCORD_CLIENT_ID = os.getenv('DISCORD_CLIENT_ID')

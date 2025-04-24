@@ -16,7 +16,8 @@ from config.config import (
     DISCORD_BOT_TOKEN, OPENAI_API_KEY, GOOGLE_GENAI_API_KEY, CLAUDE_API_KEY, 
     GROK_API_KEY, TIMEZONE, MESSAGES_DB_PATH, AI_INTERACTIONS_DB_PATH,
     ENCRYPTION_KEY, ENABLE_MESSAGE_LOGGING, ENABLE_AI_LOGGING,
-    DASHBOARD_HOST, DASHBOARD_PORT,  # Keep these for API server config
+    DASHBOARD_HOST, DASHBOARD_PORT,
+    API_HOST, API_PORT,  # Added API_HOST and API_PORT for correct API server config
     LOG_LEVEL, ENABLE_DEBUG_LOGGING, LOG_FILE_PATH
 )
 from utils.logger import setup_logger
@@ -254,6 +255,34 @@ class DiscordBot:
         
         # Schedule daily color cycle update
         self._schedule_color_cycle_task(role_color_cog)
+        
+        # Add network connection monitoring
+        self.logger.debug("Setting up network connectivity monitoring...")
+        
+        async def check_network_connectivity():
+            """Periodic task to check network connectivity"""
+            import socket
+            
+            while True:
+                try:
+                    # Try to resolve Discord's domain to check internet connectivity
+                    socket.gethostbyname("discord.com")
+                    # If successful, wait before checking again
+                    await asyncio.sleep(60)  # Check every minute
+                except socket.gaierror:
+                    # DNS resolution failed, log the issue
+                    self.logger.warning("Network connectivity issue detected - DNS resolution failed")
+                    # Wait less time before checking again when there's a problem
+                    await asyncio.sleep(15)  # Check more frequently during issues
+                except Exception as e:
+                    # Other error occurred
+                    self.logger.error(f"Error in network connectivity check: {e}")
+                    await asyncio.sleep(30)
+        
+        # Use asyncio.create_task instead of client.create_task
+        asyncio.create_task(check_network_connectivity())
+        self.logger.debug("Network connectivity monitoring task created.")
+        
         self.logger.debug("Setup hook finished.")
     
     def _schedule_color_cycle_task(self, role_color_cog):
@@ -374,13 +403,13 @@ class DiscordBot:
                 target=start_server, 
                 kwargs={
                     'bot_instance': bot_instance_for_api,
-                    'host': DASHBOARD_HOST,
-                    'port': DASHBOARD_PORT
+                    'host': API_HOST,
+                    'port': API_PORT
                 },
                 daemon=True
             )
             api_thread.start()
-            self.logger.info(f"API server thread started at {DASHBOARD_HOST}:{DASHBOARD_PORT}")
+            self.logger.info(f"API server thread started on {API_HOST}:{API_PORT}")
             
             self.logger.debug("on_ready event finished.")
         
@@ -422,7 +451,41 @@ class DiscordBot:
                 self.logger.info("Async cleanup completed successfully on close.")
             except Exception as e:
                 self.logger.error(f"Error during async cleanup on close: {e}", exc_info=True)
+        
+        @self.client.event 
+        async def on_resumed():
+            """Handle reconnection event"""
+            self.logger.info("Connection to Discord resumed")
             
+            # Verify important components are still operational
+            try:
+                # Check database connections
+                db_status = []
+                
+                if hasattr(self, 'message_monitor') and self.message_monitor and hasattr(self.message_monitor, 'db'):
+                    try:
+                        await self.message_monitor.db.execute("SELECT 1")
+                        db_status.append("MessageDB: ✅")
+                    except Exception as e:
+                        db_status.append(f"MessageDB: ❌ ({str(e)[:30]})")
+                        # Attempt to reconnect the database
+                        try:
+                            await self.message_monitor.db.reconnect()
+                            db_status[-1] = "MessageDB: ✅ (reconnected)"
+                        except Exception as e2:
+                            db_status[-1] += f" (reconnect failed: {str(e2)[:30]})"
+                
+                # Log database status
+                if db_status:
+                    self.logger.info(f"Database status after resume: {', '.join(db_status)}")
+                
+                # Refresh cache of response channels
+                self.logger.debug("Refreshing response channels cache after reconnection")
+                await self._find_or_create_response_channels()
+                
+            except Exception as e:
+                self.logger.error(f"Error during reconnection handling: {e}", exc_info=True)
+        
         # Run the client
         self.logger.info("Starting bot client...")
         try:
@@ -550,3 +613,34 @@ class DiscordBot:
         new_level = logging.DEBUG if enable else logging.WARNING
         self.logger.setLevel(new_level)
         self.logger.info(f"Debug logging {'enabled' if enable else 'disabled'}.")
+
+    def _run_api_server_in_thread(self, bot_instance, host, port):
+        """Run the API server in a separate thread with its own event loop.
+        
+        This method creates a new asyncio event loop in the current thread,
+        and then runs the start_server coroutine in that loop.
+        
+        Args:
+            bot_instance: The bot instance to be passed to the API server
+            host: The host to bind the server to
+            port: The port to bind the server to
+        """
+        try:
+            self.logger.debug(f"Setting up event loop for API server on thread {threading.current_thread().name}")
+            
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the start_server coroutine in this loop
+            self.logger.debug(f"Starting API server on {host}:{port}")
+            loop.run_until_complete(start_server(bot_instance, host=host, port=port))
+            
+            # Keep the loop running to handle requests
+            self.logger.debug("API server started, running event loop")
+            loop.run_forever()
+        except Exception as e:
+            self.logger.error(f"Error in API server thread: {e}", exc_info=True)
+        finally:
+            self.logger.debug("API server thread shutting down, closing event loop")
+            loop.close()

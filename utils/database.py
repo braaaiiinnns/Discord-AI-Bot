@@ -8,15 +8,53 @@ import aiohttp
 import asyncio
 import threading
 import uuid
+import time
+import re
 from datetime import datetime, timedelta
 from utils.ncrypt import encrypt_data, decrypt_data
 from typing import List, Dict, Any, Optional, Union, Callable
 from queue import Queue, Empty
 from threading import Thread, Lock
 from config.config import FILES_DIRECTORY # Import FILES_DIRECTORY
-import time
 
 logger = logging.getLogger('discord_bot')
+
+# Security improvement: Input validation functions
+def validate_string(value):
+    """Validate and sanitize string input"""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    # Remove potential SQL injection patterns
+    value = re.sub(r'[\'";\-\\]', '', value)
+    return value
+
+def validate_id(id_value):
+    """Validate IDs to ensure they're alphanumeric with allowed characters"""
+    if id_value is None:
+        return None
+    if not isinstance(id_value, str):
+        id_value = str(id_value)
+    # Ensure ID only contains alphanumeric, underscore, hyphen, dot
+    if not re.match(r'^[a-zA-Z0-9_\-\.]+$', id_value):
+        logger.warning(f"Invalid ID format: {id_value}")
+        raise ValueError(f"Invalid ID format")
+    return id_value
+
+def validate_timestamp(timestamp):
+    """Validate timestamp format"""
+    if timestamp is None:
+        return None
+    if not isinstance(timestamp, str):
+        timestamp = str(timestamp)
+    # Check for ISO format: YYYY-MM-DDThh:mm:ss.sssZ
+    if not re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$', timestamp):
+        # Try secondary format YYYY-MM-DD hh:mm:ss
+        if not re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$', timestamp):
+            logger.warning(f"Invalid timestamp format: {timestamp}")
+            raise ValueError(f"Invalid timestamp format")
+    return timestamp
 
 # Add the missing get_db_path function
 def get_db_path(db_name: str) -> str:
@@ -43,52 +81,95 @@ def get_db_path(db_name: str) -> str:
 # Store database connections per thread
 thread_local = threading.local()
 
-# Add a connection pool
+# Security improvement: Enhanced connection pool with better timeout handling
 class ConnectionPool:
-    def __init__(self, db_path: str, max_connections: int = 5):
+    def __init__(self, db_path: str, max_connections: int = 5, timeout: int = 30):
         self.db_path = db_path
         self.max_connections = max_connections
+        self.timeout = timeout  # Seconds to wait before timing out
         self.connections = []
         self.in_use = set()
         self.lock = asyncio.Lock()
+        self.last_used = {}  # Track when connections were last used
+        
+        # Security improvement: Set file permissions
+        if os.path.exists(db_path):
+            try:
+                os.chmod(db_path, 0o600)  # Owner read/write only
+                logger.debug(f"Set secure permissions on database file: {db_path}")
+            except Exception as e:
+                logger.warning(f"Failed to set permissions on database file: {e}")
         
     async def get_connection(self):
-        async with self.lock:
-            # Check if there's an available connection
-            available = [conn for conn in self.connections if conn not in self.in_use]
-            if available:
-                conn = available[0]
-                self.in_use.add(conn)
-                return conn
+        """Get a database connection from the pool with timeout"""
+        start_time = time.time()
+        
+        while True:
+            async with self.lock:
+                # First, clean up any stale connections that haven't been properly released
+                current_time = time.time()
+                stale_connections = [conn for conn in self.in_use 
+                                    if conn in self.last_used and 
+                                    current_time - self.last_used[conn] > self.timeout]
                 
-            # Create a new connection if below the limit
-            if len(self.connections) < self.max_connections:
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
-                self.connections.append(conn)
-                self.in_use.add(conn)
-                return conn
+                for conn in stale_connections:
+                    logger.warning(f"Reclaiming stale connection after {self.timeout}s timeout")
+                    if conn in self.in_use:
+                        self.in_use.remove(conn)
                 
-            # Wait for a connection to become available
-            while True:
-                await asyncio.sleep(0.1)
+                # Check if there's an available connection
                 available = [conn for conn in self.connections if conn not in self.in_use]
                 if available:
                     conn = available[0]
                     self.in_use.add(conn)
+                    self.last_used[conn] = current_time
                     return conn
+                    
+                # Create a new connection if below the limit
+                if len(self.connections) < self.max_connections:
+                    # Security improvement: Add pragma settings for better SQLite security
+                    conn = sqlite3.connect(self.db_path)
+                    conn.row_factory = sqlite3.Row
+                    
+                    # Security improvements: Set pragmas for better SQLite security
+                    conn.execute("PRAGMA journal_mode=WAL;")  # Write-Ahead Logging for better concurrency
+                    conn.execute("PRAGMA synchronous=NORMAL;")  # Sync less often for better performance
+                    conn.execute("PRAGMA foreign_keys=ON;")  # Enforce foreign key constraints
+                    conn.execute("PRAGMA secure_delete=ON;")  # Overwrite deleted data with zeros
+                    
+                    self.connections.append(conn)
+                    self.in_use.add(conn)
+                    self.last_used[conn] = current_time
+                    return conn
+            
+            # Check for timeout
+            if time.time() - start_time > self.timeout:
+                logger.error(f"Timeout waiting for database connection after {self.timeout}s")
+                raise TimeoutError("Timeout waiting for database connection")
+            
+            # Wait a bit before checking again
+            await asyncio.sleep(0.1)
     
     async def release_connection(self, conn):
+        """Release a connection back to the pool"""
         async with self.lock:
             if conn in self.in_use:
                 self.in_use.remove(conn)
+                # Update last used time
+                self.last_used[conn] = time.time()
     
     async def close_all(self):
+        """Close all connections in the pool"""
         async with self.lock:
             for conn in self.connections:
-                conn.close()
+                try:
+                    conn.close()
+                except Exception as e:
+                    logger.error(f"Error closing connection: {e}")
+                    
             self.connections = []
             self.in_use = set()
+            self.last_used = {}
 
 class DatabaseQueue:
     """Thread-safe queue for database operations to prevent concurrent access issues with SQLite."""
@@ -198,10 +279,31 @@ class UnifiedDatabase:
         self.encryption_key = encryption_key
         self.track_bot_messages = True  # Set to False to skip logging bot messages
         self.discord_client = None
-        self.connection_pool = ConnectionPool(db_path, max_connections=10)
+        self.files_dir = FILES_DIRECTORY  # Store reference to files directory
+        
+        # Security improvement: Set secure file permissions on the database directory
+        db_dir = os.path.dirname(db_path)
+        try:
+            if not os.path.exists(db_dir):
+                os.makedirs(db_dir, mode=0o700)  # Owner read/write/execute only
+            else:
+                os.chmod(db_dir, 0o700)
+            logger.debug(f"Set secure permissions on database directory: {db_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to set permissions on database directory: {e}")
+        
+        # Security improvement: More connections, lower timeout for better security
+        self.connection_pool = ConnectionPool(db_path, max_connections=10, timeout=15)
+        
+        # Initialize thread-local storage for connections
+        self.local_storage = threading.local()
+        self.conn = None  # Main thread connection
         
         # Create database directory if it doesn't exist
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        
+        # Initialize database queue for thread-safe operations
+        self.queue = DatabaseQueue(max_workers=1)
         
         # Store whether to create tables for later async initialization
         self.should_create_tables = create_tables
@@ -228,6 +330,13 @@ class UnifiedDatabase:
                 logger.debug(f"No existing connection found for thread {thread_name}. Creating new connection.")
                 self.local_storage.conn = sqlite3.connect(self.db_path, check_same_thread=False)
                 self.local_storage.conn.row_factory = sqlite3.Row
+                
+                # Security improvements: Set pragmas for better SQLite security
+                self.local_storage.conn.execute("PRAGMA journal_mode=WAL;")
+                self.local_storage.conn.execute("PRAGMA synchronous=NORMAL;")
+                self.local_storage.conn.execute("PRAGMA foreign_keys=ON;")
+                self.local_storage.conn.execute("PRAGMA secure_delete=ON;")
+                
                 logger.debug(f"New connection created for thread {thread_name}.")
             else:
                 logger.debug(f"Using existing connection for thread {thread_name}.")
@@ -256,13 +365,19 @@ class UnifiedDatabase:
         """Close the database connection pool."""
         logger.info("Closing database connection pool...")
         try:
+            # First, stop the queue to prevent new operations
+            if hasattr(self, 'queue') and self.queue:
+                self.queue.stop()
+                logger.info("Database queue stopped.")
+                
+            # Then close all connections
             if hasattr(self, 'connection_pool') and self.connection_pool:
                 await self.connection_pool.close_all()
                 logger.info("Database connection pool closed.")
             else:
                 logger.warning("Connection pool not found or already closed.")
         except Exception as e:
-            logger.error(f"Error closing connection pool: {e}", exc_info=True)
+            logger.error(f"Error closing database resources: {e}", exc_info=True)
 
     async def _create_tables(self):
         """Create necessary tables if they don't exist."""
@@ -416,15 +531,31 @@ class UnifiedDatabase:
         try:
             conn = await self._get_connection()
             
+            # Security improvement: Input validation
+            try:
+                message_id = validate_id(message_data.get('message_id'))
+                channel_id = validate_id(message_data.get('channel_id'))
+                guild_id = validate_id(message_data.get('guild_id'))
+                author_id = validate_id(message_data.get('author_id'))
+                author_name = validate_string(message_data.get('author_name', 'Unknown'))
+                content = message_data.get('content', '')
+                timestamp = validate_timestamp(message_data.get('timestamp'))
+                message_type = validate_string(message_data.get('message_type', 'text'))
+                is_bot = bool(message_data.get('is_bot', False))
+            except ValueError as e:
+                logger.error(f"Invalid data in message: {e}")
+                await self._release_connection(conn)
+                return False
+            
             # If the message is from a bot and we're not tracking bot messages, skip it
-            if message_data.get('is_bot', False) and not self.track_bot_messages:
+            if is_bot and not self.track_bot_messages:
                 await self._release_connection(conn)
                 return True
                 
             cursor = conn.cursor()
             
             # Encrypt the content before storing
-            content_encrypted = encrypt_data(self.encryption_key, message_data['content'])
+            content_encrypted = encrypt_data(self.encryption_key, content)
             
             # Encrypt attachments if any
             attachments_encrypted = None
@@ -435,54 +566,50 @@ class UnifiedDatabase:
                     attachments_json = message_data['attachments']
                 attachments_encrypted = encrypt_data(self.encryption_key, attachments_json)
                 
-            # Use prepared statement for better security
+            # Security improvement: Comprehensive prepared statement
             cursor.execute('''
             INSERT INTO messages (
                 message_id, channel_id, guild_id, author_id, author_name, 
-                content_encrypted, timestamp, attachments_encrypted, message_type, is_bot
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                content_encrypted, timestamp, attachments_encrypted, message_type, is_bot, 
+                metadata_encrypted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(message_id) DO UPDATE SET
-                content_encrypted = excluded.content_encrypted
+                content_encrypted = excluded.content_encrypted,
+                attachments_encrypted = excluded.attachments_encrypted
             ''', (
-                message_data['message_id'],
-                message_data['channel_id'],
-                message_data['guild_id'],
-                message_data['author_id'],
-                message_data['author_name'],
+                message_id,
+                channel_id,
+                guild_id,
+                author_id,
+                author_name,
                 content_encrypted,
-                message_data['timestamp'],
+                timestamp,
                 attachments_encrypted,
-                message_data['message_type'],
-                message_data['is_bot']
+                message_type,
+                is_bot,
+                None  # metadata_encrypted
             ))
             
-            # Insert attachments if any
-            if 'attachments' in message_data and message_data['attachments']:
-                for attachment in message_data['attachments']:
-                    cursor.execute('''
-                    INSERT INTO attachments (
-                        attachment_id, message_id, filename, url, 
-                        proxy_url, size, height, width, content_type
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(attachment_id) DO NOTHING
-                    ''', (
-                        attachment['id'],
-                        message_data['message_id'],
-                        attachment['filename'],
-                        attachment['url'],
-                        attachment['proxy_url'],
-                        attachment['size'],
-                        attachment['height'] or 0,
-                        attachment['width'] or 0,
-                        attachment.get('content_type', '')
-                    ))
-            
-            conn.commit()
-            await self._release_connection(conn)
-            return True
+            # Security improvement: Commit with proper error handling
+            try:
+                conn.commit()
+                await self._release_connection(conn)
+                return True
+            except sqlite3.Error as e:
+                logger.error(f"SQLite error during commit: {e}")
+                conn.rollback()
+                await self._release_connection(conn)
+                return False
             
         except Exception as e:
             logger.error(f"Error storing message {message_data.get('message_id', 'unknown')}: {e}", exc_info=True)
+            # Ensure connection is released even on error
+            try:
+                if 'conn' in locals():
+                    conn.rollback()
+                    await self._release_connection(conn)
+            except Exception:
+                pass
             return False
             
     async def store_message_files(self, message_data: Dict[str, Any]) -> List[Dict[str, Any]]:

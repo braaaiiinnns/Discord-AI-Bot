@@ -44,6 +44,7 @@ class UserManager:
                 access_status TEXT DEFAULT 'pending',
                 created_at INTEGER,
                 updated_at INTEGER,
+                last_login INTEGER,
                 access_token TEXT,
                 refresh_token TEXT,
                 token_expires_at INTEGER
@@ -81,6 +82,14 @@ class UserManager:
                 cursor.execute('SELECT access_status FROM users LIMIT 1')
             except sqlite3.OperationalError:
                 cursor.execute('ALTER TABLE users ADD COLUMN access_status TEXT DEFAULT "pending"')
+                conn.commit()
+                
+            # Add last_login column to users table if it doesn't exist
+            try:
+                cursor.execute('SELECT last_login FROM users LIMIT 1')
+            except sqlite3.OperationalError:
+                cursor.execute('ALTER TABLE users ADD COLUMN last_login INTEGER')
+                logger.info("Added last_login column to users table")
                 conn.commit()
                 
             conn.close()
@@ -194,35 +203,55 @@ class UserManager:
                 conn.close()
             raise
 
-    async def create_session(self, user_id: str) -> Optional[str]:
+    async def create_session(self, session_id: str, user_id: str, expires_at: str = None) -> Dict[str, Any]:
         """
         Create a new session for a user.
         
         Args:
+            session_id: Session ID to create
             user_id: Discord user ID
+            expires_at: Session expiry time (ISO format string or None)
             
         Returns:
-            Session ID if successful, None otherwise
+            Dictionary with session data if successful, None if failed
         """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Generate a new session ID
-            session_id = str(uuid.uuid4())
             current_time = int(time.time())
-            expires_at = current_time + (30 * 24 * 60 * 60)  # 30 days
+            
+            # If expires_at is provided as ISO string, convert to timestamp
+            if expires_at:
+                try:
+                    # Parse ISO format datetime string to timestamp
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(expires_at)
+                    expires_at_ts = int(dt.timestamp())
+                except Exception as e:
+                    logger.error(f"Error parsing expires_at: {e}", exc_info=True)
+                    expires_at_ts = current_time + (30 * 24 * 60 * 60)  # Default to 30 days
+            else:
+                expires_at_ts = current_time + (30 * 24 * 60 * 60)  # 30 days
             
             # Create the session
             cursor.execute('''
             INSERT INTO sessions (id, user_id, created_at, expires_at)
             VALUES (?, ?, ?, ?)
-            ''', (session_id, user_id, current_time, expires_at))
+            ''', (session_id, user_id, current_time, expires_at_ts))
             
             conn.commit()
-            conn.close()
             
-            return session_id
+            # Return session data
+            session_data = {
+                'id': session_id,
+                'user_id': user_id,
+                'created_at': current_time,
+                'expires_at': expires_at_ts
+            }
+            
+            conn.close()
+            return session_data
             
         except Exception as e:
             logger.error(f"Error creating session: {e}", exc_info=True)
@@ -355,6 +384,174 @@ class UserManager:
             if 'conn' in locals():
                 conn.close()
             return None
+
+    async def get_user_by_discord_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a user by their Discord user ID.
+        
+        Args:
+            user_id: Discord user ID
+            
+        Returns:
+            User dict if found, None otherwise
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+            user_record = cursor.fetchone()
+            conn.close()
+            
+            if not user_record:
+                return None
+                
+            user_dict = {
+                'id': user_record[0],
+                'username': user_record[1],
+                'discriminator': user_record[2],
+                'email': user_record[3],
+                'avatar': user_record[4],
+                'api_key': user_record[5],
+                'is_admin': bool(user_record[6]),
+                'access_status': user_record[7] if len(user_record) > 7 else 'pending',
+                'created_at': user_record[8] if len(user_record) > 8 else None,
+                'updated_at': user_record[9] if len(user_record) > 9 else None,
+                'access_token': user_record[10] if len(user_record) > 10 else None,
+                'refresh_token': user_record[11] if len(user_record) > 11 else None,
+                'token_expires_at': user_record[12] if len(user_record) > 12 else None
+            }
+            
+            return user_dict
+            
+        except Exception as e:
+            logger.error(f"Error getting user by Discord ID: {e}", exc_info=True)
+            if 'conn' in locals():
+                conn.close()
+            return None
+
+    async def update_user(self, user_id: str, updates: Dict[str, Any]) -> bool:
+        """
+        Update a user's information in the database.
+        
+        Args:
+            user_id: Discord user ID
+            updates: Dictionary of fields to update
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Build the SQL query dynamically based on what fields are being updated
+            update_fields = []
+            values = []
+            
+            for field, value in updates.items():
+                # Skip any fields that aren't database columns
+                if field not in ['username', 'discriminator', 'email', 'avatar', 
+                                'api_key', 'is_admin', 'access_status', 
+                                'access_token', 'refresh_token', 'token_expires_at', 
+                                'updated_at', 'last_login']:
+                    continue
+                    
+                update_fields.append(f"{field} = ?")
+                values.append(value)
+            
+            # Always update the updated_at timestamp
+            if 'updated_at' not in updates:
+                update_fields.append("updated_at = ?")
+                values.append(int(time.time()))
+                
+            # Only proceed if there are fields to update
+            if not update_fields:
+                logger.warning(f"No valid fields to update for user {user_id}")
+                conn.close()
+                return False
+                
+            # Construct and execute the SQL query
+            sql = f"UPDATE users SET {', '.join(update_fields)} WHERE id = ?"
+            values.append(user_id)
+            
+            cursor.execute(sql, values)
+            updated = cursor.rowcount > 0
+            
+            conn.commit()
+            conn.close()
+            
+            return updated
+            
+        except Exception as e:
+            logger.error(f"Error updating user {user_id}: {e}", exc_info=True)
+            if 'conn' in locals():
+                conn.close()
+            return False
+
+    async def create_user(self, user_data: Dict[str, Any]) -> bool:
+        """
+        Create a new user in the database.
+        
+        Args:
+            user_data: Dictionary containing user information
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Required fields
+            user_id = user_data.get('id')
+            username = user_data.get('username')
+            
+            if not user_id or not username:
+                logger.error("Missing required fields (id, username) for user creation")
+                conn.close()
+                return False
+                
+            # Optional fields with defaults
+            discriminator = user_data.get('discriminator', '0')
+            email = user_data.get('email')
+            avatar = user_data.get('avatar')
+            api_key = user_data.get('api_key', secrets.token_urlsafe(32))
+            is_admin = 1 if user_data.get('is_admin', False) else 0
+            access_status = user_data.get('access_status', 'pending')
+            
+            current_time = int(time.time())
+            created_at = user_data.get('created_at', current_time)
+            updated_at = user_data.get('updated_at', current_time)
+            
+            # OAuth2 tokens if available
+            access_token = user_data.get('access_token')
+            refresh_token = user_data.get('refresh_token')
+            token_expires_at = user_data.get('token_expires_at')
+            
+            # Create the user
+            cursor.execute('''
+            INSERT INTO users (
+                id, username, discriminator, email, avatar, api_key,
+                is_admin, access_status, created_at, updated_at,
+                access_token, refresh_token, token_expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                user_id, username, discriminator, email, avatar, api_key,
+                is_admin, access_status, created_at, updated_at,
+                access_token, refresh_token, token_expires_at
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error creating user: {e}", exc_info=True)
+            if 'conn' in locals():
+                conn.close()
+            return False
 
     async def update_user_api_key(self, user_id: str, api_key: str) -> bool:
         """

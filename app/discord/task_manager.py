@@ -226,7 +226,22 @@ class TaskManager:
     
     def _register_remind_me_command(self, tree: app_commands.CommandTree):
         """Register the remind_me command."""
-        @tree.command(name="remind_me", description="Set a reminder for later")
+        
+        # Check if command is already registered to prevent errors on reconnection
+        command_name = "remind_me"
+        already_registered = False
+        
+        # Check if the command is already in the tree's commands
+        for command in tree.get_commands():
+            if command.name == command_name:
+                self.logger.info(f"Command '{command_name}' is already registered, skipping registration")
+                already_registered = True
+                break
+                
+        if already_registered:
+            return
+
+        @tree.command(name=command_name, description="Set a reminder for later")
         async def remind_me(interaction: discord.Interaction, 
                           hours: int = 0, 
                           minutes: int = 0,
@@ -325,188 +340,203 @@ class TaskManager:
     def _register_task_management_commands(self, tree: app_commands.CommandTree):
         """Register commands for managing tasks."""
         
+        # Get currently registered command names
+        registered_commands = {cmd.name: cmd for cmd in tree.get_commands()}
+        
         # Task list command
-        @tree.command(name="list_tasks", description="List all scheduled tasks")
-        @app_commands.default_permissions(administrator=True)
-        async def list_tasks(interaction: discord.Interaction):
-            await interaction.response.defer(ephemeral=True)
-            
-            if not interaction.user.guild_permissions.administrator:
-                await interaction.followup.send("You need administrator permissions to use this command.", ephemeral=True)
-                return
+        if "list_tasks" not in registered_commands:
+            @tree.command(name="list_tasks", description="List all scheduled tasks")
+            @app_commands.default_permissions(administrator=True)
+            async def list_tasks(interaction: discord.Interaction):
+                await interaction.response.defer(ephemeral=True)
                 
-            task_list = []
-            for task in self.tasks_data.get("tasks", []):
-                status = "✅ Enabled" if task.get("enabled", True) else "❌ Disabled"
-                task_list.append(f"**{task['task_id']}** - {task['description']} - {status}")
-            
-            if not task_list:
-                await interaction.followup.send("No scheduled tasks configured.", ephemeral=True)
-                return
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.followup.send("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                    
+                task_list = []
+                for task in self.tasks_data.get("tasks", []):
+                    status = "✅ Enabled" if task.get("enabled", True) else "❌ Disabled"
+                    task_list.append(f"**{task['task_id']}** - {task['description']} - {status}")
                 
-            # Split into chunks if needed to avoid Discord's message length limit
-            chunks = [task_list[i:i+10] for i in range(0, len(task_list), 10)]
-            
-            for i, chunk in enumerate(chunks):
-                header = "**Scheduled Tasks:**\n" if i == 0 else ""
-                await interaction.followup.send(f"{header}{chr(10).join(chunk)}", ephemeral=True)
+                if not task_list:
+                    await interaction.followup.send("No scheduled tasks configured.", ephemeral=True)
+                    return
+                    
+                # Split into chunks if needed to avoid Discord's message length limit
+                chunks = [task_list[i:i+10] for i in range(0, len(task_list), 10)]
+                
+                for i, chunk in enumerate(chunks):
+                    header = "**Scheduled Tasks:**\n" if i == 0 else ""
+                    await interaction.followup.send(f"{header}{chr(10).join(chunk)}", ephemeral=True)
+        else:
+            self.logger.info("Command 'list_tasks' is already registered, skipping registration")
         
         # Enable/disable task command
-        @tree.command(name="toggle_task", description="Enable or disable a scheduled task")
-        @app_commands.default_permissions(administrator=True)
-        async def toggle_task(
-            interaction: discord.Interaction,
-            task_id: str,
-            enable: bool
-        ):
-            await interaction.response.defer(ephemeral=True)
-            
-            if not interaction.user.guild_permissions.administrator:
-                await interaction.followup.send("You need administrator permissions to use this command.", ephemeral=True)
-                return
-            
-            # Update the task status
-            success = self.update_task(task_id, enabled=enable)
-            
-            if success:
-                status = "enabled" if enable else "disabled"
-                await interaction.followup.send(f"Task '{task_id}' has been {status}.", ephemeral=True)
+        if "toggle_task" not in registered_commands:
+            @tree.command(name="toggle_task", description="Enable or disable a scheduled task")
+            @app_commands.default_permissions(administrator=True)
+            async def toggle_task(
+                interaction: discord.Interaction,
+                task_id: str,
+                enable: bool
+            ):
+                await interaction.response.defer(ephemeral=True)
                 
-                # Restart or stop the task if it's currently active
-                if task_id in self.task_ids:
-                    if enable:
-                        self.scheduler.restart_task(task_id)
-                    else:
-                        self.scheduler.stop_task(task_id)
-            else:
-                await interaction.followup.send(f"Task '{task_id}' not found.", ephemeral=True)
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.followup.send("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                # Update the task status
+                success = self.update_task(task_id, enabled=enable)
+                
+                if success:
+                    status = "enabled" if enable else "disabled"
+                    await interaction.followup.send(f"Task '{task_id}' has been {status}.", ephemeral=True)
+                    
+                    # Restart or stop the task if it's currently active
+                    if task_id in self.task_ids:
+                        if enable:
+                            self.scheduler.restart_task(task_id)
+                        else:
+                            self.scheduler.stop_task(task_id)
+                else:
+                    await interaction.followup.send(f"Task '{task_id}' not found.", ephemeral=True)
+        else:
+            self.logger.info("Command 'toggle_task' is already registered, skipping registration")
                 
         # Add new task command (simplified version for common task types)
-        @tree.command(name="add_interval_task", description="Add a new interval task")
-        @app_commands.default_permissions(administrator=True)
-        async def add_interval_task(
-            interaction: discord.Interaction,
-            task_id: str,
-            callback: str,
-            description: str,
-            hours: int = 0,
-            minutes: int = 0
-        ):
-            await interaction.response.defer(ephemeral=True)
-            
-            if not interaction.user.guild_permissions.administrator:
-                await interaction.followup.send("You need administrator permissions to use this command.", ephemeral=True)
-                return
+        if "add_interval_task" not in registered_commands:
+            @tree.command(name="add_interval_task", description="Add a new interval task")
+            @app_commands.default_permissions(administrator=True)
+            async def add_interval_task(
+                interaction: discord.Interaction,
+                task_id: str,
+                callback: str,
+                description: str,
+                hours: int = 0,
+                minutes: int = 0
+            ):
+                await interaction.response.defer(ephemeral=True)
                 
-            # Validate callback exists
-            if callback not in self.callback_registry:
-                await interaction.followup.send(
-                    f"Callback '{callback}' not found. Available callbacks: {', '.join(self.callback_registry.keys())}",
-                    ephemeral=True
-                )
-                return
-                
-            # Create task config
-            task_config = {
-                "task_id": task_id,
-                "task_type": "interval",
-                "callback": callback,
-                "description": description,
-                "enabled": True,
-                "parameters": {
-                    "hours": hours,
-                    "minutes": minutes,
-                    "seconds": 0
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.followup.send("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                    
+                # Validate callback exists
+                if callback not in self.callback_registry:
+                    await interaction.followup.send(
+                        f"Callback '{callback}' not found. Available callbacks: {', '.join(self.callback_registry.keys())}",
+                        ephemeral=True
+                    )
+                    return
+                    
+                # Create task config
+                task_config = {
+                    "task_id": task_id,
+                    "task_type": "interval",
+                    "callback": callback,
+                    "description": description,
+                    "enabled": True,
+                    "parameters": {
+                        "hours": hours,
+                        "minutes": minutes,
+                        "seconds": 0
+                    }
                 }
-            }
-            
-            # Add the task
-            self.add_task(task_config)
-            
-            # Schedule and start the task
-            try:
-                registered_task_id = self.scheduler.schedule_interval(
-                    self.callback_registry[callback],
-                    hours=hours,
-                    minutes=minutes,
-                    seconds=0,
-                    task_id=task_id
-                )
-                self.task_ids.append(registered_task_id)
-                self.scheduler.start_task(task_id)
                 
-                await interaction.followup.send(
-                    f"Task '{task_id}' added and started. It will run every {hours}h {minutes}m.",
-                    ephemeral=True
-                )
-            except Exception as e:
-                self.logger.error(f"Error scheduling new task '{task_id}': {e}", exc_info=True)
-                await interaction.followup.send(
-                    f"Task added to configuration but failed to start: {str(e)}",
-                    ephemeral=True
-                )
+                # Add the task
+                self.add_task(task_config)
+                
+                # Schedule and start the task
+                try:
+                    registered_task_id = self.scheduler.schedule_interval(
+                        self.callback_registry[callback],
+                        hours=hours,
+                        minutes=minutes,
+                        seconds=0,
+                        task_id=task_id
+                    )
+                    self.task_ids.append(registered_task_id)
+                    self.scheduler.start_task(task_id)
+                    
+                    await interaction.followup.send(
+                        f"Task '{task_id}' added and started. It will run every {hours}h {minutes}m.",
+                        ephemeral=True
+                    )
+                except Exception as e:
+                    self.logger.error(f"Error scheduling new task '{task_id}': {e}", exc_info=True)
+                    await interaction.followup.send(
+                        f"Task added to configuration but failed to start: {str(e)}",
+                        ephemeral=True
+                    )
+        else:
+            self.logger.info("Command 'add_interval_task' is already registered, skipping registration")
         
         # Add the role color change command for administrators
-        @tree.command(name="change_role_color", description="Change the color of a specific role")
-        @app_commands.default_permissions(administrator=True)
-        async def change_role_color(
-            interaction: discord.Interaction,
-            role_name: str = None
-        ):
-            await interaction.response.defer(ephemeral=True)
-            
-            # Check if user has administrator permissions
-            if not interaction.user.guild_permissions.administrator:
-                await interaction.followup.send("You need administrator permissions to use this command.", ephemeral=True)
-                return
-            
-            # Check if role color manager is initialized
-            if not self.role_color_manager:
-                await interaction.followup.send("Role color manager is not initialized.", ephemeral=True)
-                return
-            
-            # Get the configured roles
-            configured_roles = self.role_color_manager.get_configured_role_names()
-            
-            # If no role name is provided, list the available roles
-            if not role_name:
-                role_list = "\n".join([f"• {role}" for role in configured_roles])
-                await interaction.followup.send(
-                    f"**Configured roles for color change:**\n{role_list}\n\n"
-                    f"Use `/change_role_color role_name:RoleName` to change a specific role's color.",
-                    ephemeral=True
+        if "change_role_color" not in registered_commands:
+            @tree.command(name="change_role_color", description="Change the color of a specific role")
+            @app_commands.default_permissions(administrator=True)
+            async def change_role_color(
+                interaction: discord.Interaction,
+                role_name: str = None
+            ):
+                await interaction.response.defer(ephemeral=True)
+                
+                # Check if user has administrator permissions
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.followup.send("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                # Check if role color manager is initialized
+                if not self.role_color_manager:
+                    await interaction.followup.send("Role color manager is not initialized.", ephemeral=True)
+                    return
+                
+                # Get the configured roles
+                configured_roles = self.role_color_manager.get_configured_role_names()
+                
+                # If no role name is provided, list the available roles
+                if not role_name:
+                    role_list = "\n".join([f"• {role}" for role in configured_roles])
+                    await interaction.followup.send(
+                        f"**Configured roles for color change:**\n{role_list}\n\n"
+                        f"Use `/change_role_color role_name:RoleName` to change a specific role's color.",
+                        ephemeral=True
+                    )
+                    return
+                
+                # Check if the provided role is in the configured roles
+                found = False
+                for configured_role in configured_roles:
+                    if role_name.lower() == configured_role.lower().strip():
+                        role_name = configured_role  # Use the exact case from configuration
+                        found = True
+                        break
+                
+                if not found:
+                    await interaction.followup.send(
+                        f"Role '{role_name}' is not in the configured color change roles. "
+                        f"Available roles are: {', '.join(configured_roles)}",
+                        ephemeral=True
+                    )
+                    return
+                
+                # Change the role color
+                success, message = await self.role_color_manager.change_specific_role_color(
+                    interaction.guild_id, 
+                    role_name
                 )
-                return
-            
-            # Check if the provided role is in the configured roles
-            found = False
-            for configured_role in configured_roles:
-                if role_name.lower() == configured_role.lower().strip():
-                    role_name = configured_role  # Use the exact case from configuration
-                    found = True
-                    break
-            
-            if not found:
-                await interaction.followup.send(
-                    f"Role '{role_name}' is not in the configured color change roles. "
-                    f"Available roles are: {', '.join(configured_roles)}",
-                    ephemeral=True
-                )
-                return
-            
-            # Change the role color
-            success, message = await self.role_color_manager.change_specific_role_color(
-                interaction.guild_id, 
-                role_name
-            )
-            
-            if success:
-                await interaction.followup.send(
-                    f"✅ {message}",
-                    ephemeral=True
-                )
-            else:
-                await interaction.followup.send(
-                    f"❌ {message}",
-                    ephemeral=True
-                )
+                
+                if success:
+                    await interaction.followup.send(
+                        f"✅ {message}",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        f"❌ {message}",
+                        ephemeral=True
+                    )
+        else:
+            self.logger.info("Command 'change_role_color' is already registered, skipping registration")

@@ -7,8 +7,8 @@ import logging
 import json
 import os
 import discord # Import discord for type hints and utilities
-from flask import Blueprint, jsonify, request, current_app
-from flask_cors import CORS
+from quart import Blueprint, jsonify, request, current_app
+from quart_cors import cors
 # from flask_login import login_required # Removed old login decorator
 from .auth import require_api_key # Import the new API key decorator
 from ..discord.message_monitor import MessageMonitor
@@ -30,7 +30,8 @@ logger = setup_logger('discord_bot.api.dashboard')
 dashboard_bp = Blueprint('dashboard_api', __name__, url_prefix='/api') # Changed prefix to /api
 
 # Enable CORS for the blueprint
-CORS(dashboard_bp)
+# Apply CORS to the blueprint
+dashboard_bp = cors(dashboard_bp)
 
 # Store references
 bot_instance = None
@@ -43,6 +44,11 @@ async def initialize(bot):
     Args:
         bot: The bot instance to use for accessing the database
     """
+    global bot_instance, data_service
+
+    # Store the bot reference
+    bot_instance = bot
+    
     # Store the data service (ensure proper message_monitor access)
     data_service = None
     max_retries = 3
@@ -103,7 +109,7 @@ async def initialize(bot):
 
 @dashboard_bp.route('/dashboard/health', methods=['GET'])
 # No API key needed for health check
-def health_check():
+async def health_check():
     """Simple health check endpoint"""
     return jsonify({
         "status": "healthy",
@@ -115,11 +121,12 @@ def health_check():
 async def summary():
     """Get summary statistics for all guilds or a specific guild"""
     try:
-        guild_id = request.args.get('guild_id')
+        args = await request.args
+        guild_id = args.get('guild_id')
         filter_criteria = {"guild_id": guild_id} if guild_id else None
         
         # Use mock data for testing if needed
-        use_mock = request.args.get('mock', 'false').lower() == 'true'
+        use_mock = args.get('mock', 'false').lower() == 'true'
         
         if use_mock:
             data = get_mock_data()
@@ -145,12 +152,13 @@ async def summary():
 async def messages():
     """Get message statistics"""
     try:
-        guild_id = request.args.get('guild_id')
-        days = int(request.args.get('days', 30))
+        args = await request.args
+        guild_id = args.get('guild_id')
+        days = int(args.get('days', 30))
         filter_criteria = {"guild_id": guild_id} if guild_id else None
         
         # Use mock data for testing if needed
-        use_mock = request.args.get('mock', 'false').lower() == 'true'
+        use_mock = args.get('mock', 'false').lower() == 'true'
         
         if use_mock:
             data = get_mock_message_data()
@@ -176,12 +184,13 @@ async def messages():
 async def users():
     """Get user statistics"""
     try:
-        guild_id = request.args.get('guild_id')
-        limit = int(request.args.get('limit', 10))
+        args = await request.args
+        guild_id = args.get('guild_id')
+        limit = int(args.get('limit', 10))
         filter_criteria = {"guild_id": guild_id} if guild_id else None
         
         # Use mock data for testing if needed
-        use_mock = request.args.get('mock', 'false').lower() == 'true'
+        use_mock = args.get('mock', 'false').lower() == 'true'
         
         if use_mock:
             data = get_mock_user_data()
@@ -207,12 +216,13 @@ async def users():
 async def ai_interactions():
     """Get AI interaction statistics"""
     try:
-        guild_id = request.args.get('guild_id')
-        days = int(request.args.get('days', 30))
+        args = await request.args
+        guild_id = args.get('guild_id')
+        days = int(args.get('days', 30))
         filter_criteria = {"guild_id": guild_id} if guild_id else None
         
         # Use mock data for testing if needed
-        use_mock = request.args.get('mock', 'false').lower() == 'true'
+        use_mock = args.get('mock', 'false').lower() == 'true'
         
         if use_mock:
             data = get_mock_ai_data()
@@ -235,7 +245,7 @@ async def ai_interactions():
 
 @dashboard_bp.route('/dashboard/guilds', methods=['GET'])
 @require_api_key # Add API key protection
-def guilds():
+async def guilds():
     """Get list of available guilds"""
     try:
         # Use bot_instance instead of the undefined message_monitor variable
@@ -358,38 +368,38 @@ async def get_all_ai_interactions_data():
 @dashboard_bp.route('/dashboard/data/json/message_listeners', methods=['GET'])
 @require_api_key # Add API key protection
 async def get_message_listeners_json():
-    data = read_json_file(MESSAGE_LISTENERS_FILE)
+    data = await read_json_file(MESSAGE_LISTENERS_FILE)
     return jsonify(data)
 
 @dashboard_bp.route('/dashboard/data/json/premium_roles', methods=['GET'])
 @require_api_key # Add API key protection
 async def get_premium_roles_json():
-    data = read_json_file(PREMIUM_ROLES_FILE)
+    data = await read_json_file(PREMIUM_ROLES_FILE)
     return jsonify(data)
 
 @dashboard_bp.route('/dashboard/data/json/previous_role_colors', methods=['GET'])
 @require_api_key # Add API key protection
 async def get_previous_role_colors_json():
-    data = read_json_file(PREVIOUS_ROLE_COLORS_FILE)
+    data = await read_json_file(PREVIOUS_ROLE_COLORS_FILE)
     return jsonify(data)
 
 @dashboard_bp.route('/dashboard/data/json/role_color_cycles', methods=['GET'])
 @require_api_key # Add API key protection
 async def get_role_color_cycles_json():
-    data = read_json_file(ROLE_COLOR_CYCLES_FILE)
+    data = await read_json_file(ROLE_COLOR_CYCLES_FILE)
     return jsonify(data)
 
 @dashboard_bp.route('/dashboard/data/json/tasks', methods=['GET'])
 @require_api_key # Add API key protection
 async def get_tasks_json():
-    data = read_json_file(TASKS_FILE)
+    data = await read_json_file(TASKS_FILE)
     return jsonify(data)
 
 # --- New Bot Interaction Endpoints (under /api/bot/) ---
 
 @dashboard_bp.route('/bot/status', methods=['GET'])
 @require_api_key
-def bot_status():
+async def bot_status():
     """Get the bot's current status."""
     # Use global bot_instance instead of current_app.config
     if not bot_instance or not hasattr(bot_instance, 'client'):
@@ -406,7 +416,7 @@ def bot_status():
 
 @dashboard_bp.route('/bot/guilds/<int:guild_id>', methods=['GET'])
 @require_api_key
-def get_guild_details(guild_id):
+async def get_guild_details(guild_id):
     """Get details for a specific guild."""
     # Use global bot_instance instead of current_app.config
     if not bot_instance or not hasattr(bot_instance, 'client'):
@@ -471,7 +481,7 @@ async def get_user_details(user_id):
 
 @dashboard_bp.route('/bot/tasks', methods=['GET'])
 @require_api_key
-def list_scheduled_tasks():
+async def list_scheduled_tasks():
     """List all currently scheduled tasks."""
     # Use global bot_instance instead of current_app.config
     if not bot_instance or not hasattr(bot_instance, 'scheduler'):
@@ -483,7 +493,7 @@ def list_scheduled_tasks():
 
 @dashboard_bp.route('/bot/cogs', methods=['GET'])
 @require_api_key
-def list_loaded_cogs():
+async def list_loaded_cogs():
     """List all currently loaded cogs."""
     # Use global bot_instance instead of current_app.config
     if not bot_instance or not hasattr(bot_instance, 'client') or not hasattr(bot_instance.client, 'cogs'):
@@ -495,14 +505,19 @@ def list_loaded_cogs():
 
 # --- Helper Functions (Keep existing read_json_file and mock data generators) ---
 
-# Helper function to read JSON files
-def read_json_file(file_path):
+# Helper function to read JSON files - make it async
+async def read_json_file(file_path):
     if not os.path.exists(file_path):
         logger.warning(f"JSON file not found: {file_path}")
         return {"error": f"File not found: {os.path.basename(file_path)}"}
     try:
-        with open(file_path, 'r') as f:
-            return json.load(f)
+        # Use async file i/o for better performance
+        loop = asyncio.get_event_loop()
+        def _read_file():
+            with open(file_path, 'r') as f:
+                return json.load(f)
+                
+        return await loop.run_in_executor(None, _read_file)
     except json.JSONDecodeError as e:
         logger.error(f"Error decoding JSON from {file_path}: {e}")
         return {"error": f"Invalid JSON in {os.path.basename(file_path)}"}

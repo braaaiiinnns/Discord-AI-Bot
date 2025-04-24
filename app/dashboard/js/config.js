@@ -3,8 +3,8 @@
  */
 
 const DashboardConfig = {
-    // API Base URL - adjust this to match your server's host and port
-    apiBaseUrl: window.location.protocol + '//' + window.location.host + '/api',
+    // API Base URL - pointing to separate API server
+    apiBaseUrl: 'http://127.0.0.1:5000/api',
     
     // Default time range in days
     defaultTimeRange: 30,

@@ -259,8 +259,29 @@ class Auth {
     /**
      * Login with Discord
      */
-    login() {
-        window.location.href = `${this.authEndpoint}/login`;
+    async login() {
+        try {
+            // Show loading state if needed
+            const loginBtn = document.getElementById('discord-login-btn');
+            if (loginBtn) {
+                loginBtn.disabled = true;
+                loginBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Connecting...';
+            }
+            
+            // Instead of trying to fetch the OAuth URL directly, redirect to our backend login endpoint
+            window.location.href = `${this.authEndpoint}/login`;
+            
+            // No need for additional code here since we're redirecting the browser
+        } catch (error) {
+            console.error('Error during login:', error);
+            // Reset button state
+            const loginBtn = document.getElementById('discord-login-btn');
+            if (loginBtn) {
+                loginBtn.disabled = false;
+                loginBtn.innerHTML = '<i class="fab fa-discord"></i> Login with Discord';
+            }
+            alert('Error connecting to Discord. Please try again.');
+        }
     }
 
     /**
@@ -661,6 +682,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     alert('Failed to regenerate API key.');
                 }
             }
+        });
+    }
+
+    // Set up Discord login button event listener
+    const discordLoginBtn = document.getElementById('discord-login-btn');
+    if (discordLoginBtn) {
+        discordLoginBtn.addEventListener('click', function() {
+            auth.login();
         });
     }
 

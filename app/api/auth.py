@@ -4,7 +4,7 @@ Provides both API key authentication and user session authentication.
 """
 
 import os
-import asyncio
+import asyncio  # Ensuring asyncio is properly imported
 import secrets
 import time
 from functools import wraps
@@ -127,7 +127,6 @@ def require_api_key(f):
             return jsonify({"error": "Invalid API key"}), 403
 
         # If key is valid, proceed with the original function
-        # Handle both async and sync functions
         # Security improvement: Log access for audit trail
         logger.info(f"API access with master key to {request.path}")
         if asyncio.iscoroutinefunction(f):

@@ -20,6 +20,9 @@ from .user_model import user_manager
 from utils.logger import setup_logger
 from urllib.parse import urlencode
 
+# Import the new API key manager
+from utils.api_key_manager import api_key_manager
+
 # Set up logger
 logger = setup_logger('discord_bot.api.auth_routes')
 
@@ -33,9 +36,9 @@ DISCORD_REDIRECT_URI = os.environ.get('DISCORD_REDIRECT_URI')
 if not DISCORD_REDIRECT_URI:
     # Only use this fallback if env variable isn't set
     if os.environ.get('FLASK_ENV') == 'production':
-        default_redirect = 'https://localhost:5000/api/auth/callback'
+        default_redirect = 'https://127.0.0.1:5000/api/auth/callback'
     else:
-        default_redirect = 'http://localhost:5000/api/auth/callback'
+        default_redirect = 'http://127.0.0.1:5000/api/auth/callback'
     DISCORD_REDIRECT_URI = default_redirect
     
 # Log the configured redirect URI to help with debugging
@@ -271,9 +274,9 @@ async def callback():
             session['user'] = user_info
             session['logged_in'] = True
             session['login_time'] = datetime.utcnow().isoformat()
+            session.modified = True  # Explicitly mark the session as modified
             
-            # Set session cookie and redirect to dashboard
-            # Get the dashboard URL from the request origin or use the environment variable
+            # Get the dashboard URL from request origin or environment variable
             origin_url = request.headers.get('Origin')
             frontend_url = os.environ.get('FRONTEND_URL')
             
@@ -299,7 +302,8 @@ async def callback():
                 secure=os.environ.get('FLASK_ENV') == 'production',
                 samesite='Lax',
                 max_age=60*60*24*7,  # 7 days
-                domain=None  # Allow the browser to set the domain automatically
+                path='/',           # Apply cookie to all paths
+                domain=None         # Allow the browser to handle domain matching
             )
             logger.info(f"Authentication successful, redirecting to dashboard with session cookie")
             return response
@@ -387,7 +391,7 @@ async def get_user():
         response.delete_cookie('session_id')
         return response, 401
     
-    # Return user data, excluding sensitive information
+    # Return user data, including the API key for proper authentication
     return jsonify({
         'authenticated': True,
         'user': {
@@ -396,8 +400,7 @@ async def get_user():
             'discriminator': user['discriminator'],
             'avatar': user['avatar'],
             'email': user['email'],
-            # Security improvement: Don't return API key directly
-            'has_api_key': bool(user.get('api_key')),
+            'api_key': user.get('api_key'),  # Include the actual API key
             'is_admin': user['is_admin']
         }
     })
@@ -458,21 +461,38 @@ async def validate_api_key():
     if not api_key:
         return jsonify({'valid': False, 'error': 'No API key provided'}), 400
     
-    user = await user_manager.get_user_by_api_key(api_key)
+    # Use the new API key manager for validation
+    is_valid = api_key_manager.validate_key(api_key)
     
-    if not user:
-        # Security improvement: Add delay to prevent timing attacks
-        await asyncio.sleep(0.5)
-        return jsonify({'valid': False}), 401
+    if not is_valid:
+        # Check if it's a user-specific key in the database
+        user = await user_manager.get_user_by_api_key(api_key)
+        
+        if not user:
+            # Security improvement: Add delay to prevent timing attacks
+            await asyncio.sleep(0.5)
+            return jsonify({'valid': False}), 401
     
-    # Security improvement: Return minimal user information
-    return jsonify({
-        'valid': True,
-        'user': {
-            'id': user['id'],
-            'username': user['username']
-        }
-    })
+        # Get key metadata
+        key_info = api_key_manager.extract_data_from_key(api_key)
+        
+        # Security improvement: Return minimal user information
+        return jsonify({
+            'valid': True,
+            'user': {
+                'id': user['id'],
+                'username': user['username']
+            },
+            'key_info': key_info
+        })
+    else:
+        # This is a valid system key, not tied to a specific user
+        key_info = api_key_manager.extract_data_from_key(api_key)
+        
+        return jsonify({
+            'valid': True,
+            'key_info': key_info
+        })
 
 # Security improvement: Apply rate limits and require admin for all admin endpoints
 @auth_bp.route('/admin/users')
@@ -724,6 +744,35 @@ async def admin_reset_api_key(user_id: str):
         return jsonify({'error': 'Failed to reset API key'}), 500
     
     return jsonify({'success': True})
+
+@auth_bp.route('/user/api-key', methods=['PUT'])
+@rate_limit(5, timedelta(hours=1))
+async def regenerate_user_api_key():
+    """Generate a new API key for the authenticated user."""
+    session_id = await get_session_id()
+    
+    if not session_id:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    user = await user_manager.get_user_by_session(session_id)
+    
+    if not user:
+        return jsonify({'error': 'Invalid session'}), 401
+    
+    # Use our new API key manager to generate a more secure key
+    new_api_key = api_key_manager.generate_key()
+    
+    # Update the user's API key
+    success = await user_manager.update_user_api_key(user['id'], new_api_key)
+    
+    if not success:
+        return jsonify({'error': 'Failed to update API key'}), 500
+    
+    return jsonify({
+        'success': True,
+        'api_key': new_api_key,
+        'key_info': api_key_manager.extract_data_from_key(new_api_key)
+    })
 
 # Functions to send Discord notifications
 async def send_access_request_notification(user, message):

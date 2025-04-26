@@ -8,6 +8,9 @@ from config.config import FLASK_SESSION_DIR
 from typing import Callable, Dict, List, Optional
 from .session_handler import setup_session_handler
 
+# Import API key manager
+from utils.api_key_manager import api_key_manager
+
 # Set up logger
 logger = logging.getLogger('discord_bot.api')
 
@@ -218,6 +221,17 @@ async def api_root():
         "endpoints": ["/api/auth", "/api/dashboard", "/api/bot"]
     })
 
+# Health check endpoint
+@app.route('/health')
+@app.route('/api/health')  # Adding an additional route for flexibility
+async def health_check():
+    """API health check endpoint - used to verify server is up and running"""
+    logger.debug("Health check endpoint accessed")
+    return jsonify({
+        "status": "ok",
+        "time": datetime.utcnow().isoformat()
+    })
+
 # Root route for direct login redirects
 @app.route('/login')
 async def login_redirect():
@@ -263,6 +277,8 @@ try:
     from .dashboard_api import dashboard_bp
     from .auth_routes import auth_bp, register_blueprint as register_auth_bp
     from .debug import register_blueprint as register_debug_bp
+    # Import our new middleware
+    from .middleware import require_auth
     
     # Check if auth_debug is available
     has_auth_debug = False
@@ -295,7 +311,12 @@ async def initialize_with_bot(bot_instance):
 
     # Store the bot instance in app config for easy access in routes
     app.config['BOT_INSTANCE'] = bot_instance
-
+    
+    # Initialize the API key manager with the bot instance
+    # This allows the API key validation system to work properly
+    app.config['API_KEY_MANAGER'] = api_key_manager
+    logger.info("API key manager initialized and attached to app config")
+    
     # Store the data service (ensure proper message_monitor access)
     db_connection = None
     success = False

@@ -3,22 +3,69 @@
  */
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Authentication is now handled by auth.js
-    // When auth.js loads, it will call initAuth() which will:
-    // 1. Check if the user is authenticated
-    // 2. Show login page or dashboard based on authentication status
+    console.debug('Dashboard DOM loaded, initializing...');
     
     // Set up event listeners
     setupEventListeners();
     
     // Load settings from local storage
     loadSettings();
+    
+    // Wait a small amount of time to ensure API and Auth modules are properly initialized
+    setTimeout(() => {
+        // Check if API is ready for requests
+        if (!api || !api.isAuthReady) {
+            console.debug('API not ready yet, waiting for auth initialization...');
+            
+            // Force API initialization with localStorage API key if available
+            const savedApiKey = localStorage.getItem(DashboardConfig.storage.apiKey);
+            if (savedApiKey && api) {
+                console.debug('Using saved API key to initialize API');
+                api.setApiKey(savedApiKey);
+            }
+        }
+        
+        // Begin dashboard initialization (will be queued if auth isn't ready yet)
+        initializeDashboard();
+    }, 300); // Short delay to ensure modules are initialized
 });
 
 /**
  * Initialize the dashboard
  */
 function initializeDashboard() {
+    console.debug('Initializing dashboard...');
+    
+    // First check if auth is ready
+    const authReady = auth && auth.isAuthenticated && auth.user && auth.user.api_key;
+    
+    if (!authReady) {
+        console.debug('Auth not ready yet, waiting for authentication...');
+        // Listen for auth state changes
+        auth.addAuthStateListener((authState) => {
+            if (authState.isAuthenticated && authState.user && authState.user.api_key) {
+                console.debug('Auth is now ready, continuing dashboard initialization');
+                continueDashboardInit();
+            }
+        });
+        return;
+    }
+    
+    continueDashboardInit();
+}
+
+/**
+ * Continue dashboard initialization after authentication is ready
+ */
+function continueDashboardInit() {
+    // Double-check API key availability before proceeding
+    const savedApiKey = localStorage.getItem(DashboardConfig.storage.apiKey);
+    if ((!api.apiKey || api.apiKey === "undefined" || api.apiKey === "null") && savedApiKey) {
+        console.debug('Setting API key from localStorage before continuing dashboard init');
+        api.setApiKey(savedApiKey);
+        api.setAuthReady();
+    }
+
     // Check API connectivity
     checkApiConnection()
         .then(connected => {
@@ -389,6 +436,31 @@ function setupRefreshTimer() {
     
     // Set up new timer
     window.dashboardRefreshTimer = setInterval(() => {
+        console.debug('Running scheduled dashboard refresh...');
+        
+        // CRITICAL FIX: Explicitly ensure API key is available before periodic API calls
+        // This directly addresses the 30-second authentication loss issue
+        if (api && typeof api._ensureApiKey === 'function') {
+            const hasKey = api._ensureApiKey();
+            console.debug(`Periodic refresh: API key ${hasKey ? 'verified' : 'not available'}`);
+            
+            if (!hasKey) {
+                console.warn('No API key available for periodic refresh - requests will likely fail');
+                // Try to recover by fetching from auth if possible
+                if (auth && auth.isAuthenticated && typeof auth.fetchApiKey === 'function') {
+                    auth.fetchApiKey().then(keyData => {
+                        if (keyData && keyData.api_key) {
+                            api.setApiKey(keyData.api_key);
+                            console.debug('Successfully recovered API key during periodic refresh');
+                        }
+                    }).catch(err => {
+                        console.error('Failed to recover API key:', err);
+                    });
+                }
+            }
+        }
+        
+        // Now make the API requests
         const guildId = document.getElementById('guild-selector').value;
         loadDashboardData(guildId);
         loadBotStatus();
@@ -488,5 +560,32 @@ function escapeHtml(unsafe) {
  * Update settings page with user data
  */
 function updateSettingsPage() {
-    updateUserProfile();
+    if (auth && auth.user) {
+        updateUserProfile();
+    }
+}
+
+/**
+ * Update user profile information on the settings page
+ */
+function updateUserProfile() {
+    if (!auth || !auth.user) return;
+    
+    // Update profile avatar and info
+    const avatar = document.getElementById('settings-avatar');
+    const username = document.getElementById('settings-username');
+    const userId = document.getElementById('settings-user-id');
+    const apiKeyField = document.getElementById('api-key');
+    
+    if (auth.user.avatar) {
+        avatar.src = auth.user.avatar;
+    }
+    
+    username.textContent = auth.user.username || 'Unknown User';
+    userId.textContent = `ID: ${auth.user.id || 'Unknown'}`;
+    
+    // Update API key if available
+    if (auth.user.api_key) {
+        apiKeyField.value = auth.user.api_key;
+    }
 }

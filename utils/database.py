@@ -1142,7 +1142,8 @@ class UnifiedDatabase:
                     "top_users": []
                 }
                 
-                conn = self._get_connection()
+                # Use the synchronous connection method instead of the async one
+                conn = self._connect()
                 cursor = conn.cursor()
                 
                 # Add WHERE clause if guild_id is provided

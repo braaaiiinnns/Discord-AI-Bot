@@ -32,6 +32,33 @@ class Auth {
                 if (accessData.is_admin) {
                     this.accessStatus = 'approved';
                 }
+                
+                // Fetch API key if it's not already loaded
+                if (this.user && (!this.user.api_key || this.user.api_key === undefined)) {
+                    try {
+                        console.debug('Fetching API key for authenticated user...');
+                        const keyData = await this.fetchApiKey();
+                        if (keyData && keyData.api_key) {
+                            console.debug('API key fetched successfully');
+                            this.user.api_key = keyData.api_key;
+                            
+                            // Save API key to localStorage as fallback
+                            localStorage.setItem(DashboardConfig.storage.apiKey, keyData.api_key);
+                        }
+                    } catch (e) {
+                        console.warn('Error fetching API key:', e);
+                    }
+                }
+            } else {
+                // Even if user auth failed, check for API key in localStorage for API requests
+                const savedApiKey = localStorage.getItem(DashboardConfig.storage.apiKey);
+                if (savedApiKey) {
+                    console.debug('Using saved API key from localStorage for API requests');
+                    // If api is defined, set the key directly
+                    if (typeof api !== 'undefined') {
+                        api.setApiKey(savedApiKey);
+                    }
+                }
             }
             
             // Update the UI based on auth state and access status
@@ -39,10 +66,29 @@ class Auth {
             
             // Notify listeners of auth state
             this.notifyAuthStateChanged();
+            
+            // Mark API as ready to process queued requests
+            if (api && typeof api.setAuthReady === 'function') {
+                api.setAuthReady();
+                console.debug('API notified that authentication is ready');
+            }
         } catch (error) {
             console.error('Failed to initialize authentication:', error);
             this.isAuthenticated = false;
             this.user = null;
+            
+            // Check for saved API key in localStorage
+            const savedApiKey = localStorage.getItem(DashboardConfig.storage.apiKey);
+            if (savedApiKey && typeof api !== 'undefined') {
+                console.debug('Using saved API key from localStorage after auth failure');
+                api.setApiKey(savedApiKey);
+            }
+            
+            // Even on auth error, mark API as ready to prevent indefinite queuing
+            if (api && typeof api.setAuthReady === 'function') {
+                api.setAuthReady();
+                console.debug('API notified that authentication failed but can proceed');
+            }
         }
     }
 
@@ -253,6 +299,98 @@ class Auth {
         } catch (error) {
             console.error('Error regenerating API key:', error);
             return null;
+        }
+    }
+
+    /**
+     * Fetch the API key for the authenticated user
+     * @returns {Promise<Object>} Response containing the API key
+     */
+    async fetchApiKey() {
+        if (!this.isAuthenticated) {
+            console.error('Cannot fetch API key: Not authenticated');
+            return null;
+        }
+        
+        try {
+            const response = await fetch(`${this.authEndpoint}/key`, {
+                method: 'GET',
+                credentials: 'include', // Include cookies for session
+                cache: 'no-store' // Prevent caching to ensure fresh key
+            });
+            
+            if (!response.ok) {
+                console.error('Failed to fetch API key:', response.status);
+                
+                // If session expired, try to refresh it
+                if (response.status === 401 && this.user) {
+                    console.debug('Session may have expired, attempting to refresh auth state');
+                    await this.refreshAuthState();
+                }
+                
+                return null;
+            }
+            
+            const data = await response.json();
+            
+            // If successful, update stored key and notify listeners
+            if (data && data.api_key) {
+                // Update locally
+                if (this.user) {
+                    this.user.api_key = data.api_key;
+                }
+                
+                // Save to localStorage as fallback
+                localStorage.setItem(DashboardConfig.storage.apiKey, data.api_key);
+                
+                // Notify listeners of updated state
+                this.notifyAuthStateChanged();
+            }
+            
+            return data;
+        } catch (error) {
+            console.error('Error fetching API key:', error);
+            return null;
+        }
+    }
+    
+    /**
+     * Refresh authentication state by checking current user and access status
+     * @returns {Promise<boolean>} Success status
+     */
+    async refreshAuthState() {
+        try {
+            // Get current user
+            const userData = await this.fetchCurrentUser();
+            const wasAuthenticated = this.isAuthenticated;
+            
+            this.isAuthenticated = userData.authenticated;
+            if (userData.user) {
+                this.user = userData.user;
+            }
+            
+            // If newly authenticated, check access and get API key
+            if (this.isAuthenticated && !wasAuthenticated) {
+                const accessData = await this.checkAccessStatus();
+                this.accessStatus = accessData.status;
+                
+                // If user is admin, grant access automatically
+                if (accessData.is_admin) {
+                    this.accessStatus = 'approved';
+                }
+                
+                // Always try to fetch fresh API key
+                await this.fetchApiKey();
+            }
+            
+            // Update UI
+            this.updateUI();
+            this.notifyAuthStateChanged();
+            
+            return this.isAuthenticated;
+        } catch (error) {
+            console.error('Error refreshing auth state:', error);
+            return false;
         }
     }
 

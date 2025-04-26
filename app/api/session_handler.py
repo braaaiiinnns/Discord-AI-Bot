@@ -81,26 +81,20 @@ class FixedSessionInterface:
                             sid_for_signature = sid
                             
                         try:
+                            # Properly handle the signature validation using try/except
                             sid_bytes = signer.unsign(sid_for_signature)
                             sid = sid_bytes.decode('utf-8')
                         except BadSignature:
                             # Log more details for diagnostic purposes
-                            app.logger.warning(f"Bad signature for sid: {sid[:30]}... (truncated)")
-                            # Add additional info if possible to help diagnose the issue
-                            try:
-                                if len(sid) > 100:
-                                    app.logger.debug(f"Session ID is unusually long ({len(sid)} chars)")
-                                # Log timestamp to help correlate with other logs
-                                from datetime import datetime
-                                app.logger.debug(f"Bad signature detected at {datetime.now().isoformat()}")
-                            except Exception:
-                                pass
-                            # Create a new session with a new ID
+                            logger.warning(f"Bad signature for sid: {sid[:30]}... (truncated)")
+                            
+                            # Create a new session with a new ID instead of failing
+                            logger.info("Creating new session due to bad signature")
                             from quart_session.sessions import ServerSideSession
                             session_class = getattr(self.original_interface, 'session_class', ServerSideSession)
                             return session_class(sid=self._generate_sid())
                 except Exception as e:
-                    app.logger.error(f"Error unsigning session ID: {e}")
+                    logger.error(f"Error unsigning session ID: {e}")
                     # Fall back to secure cookie session
                     return await self.secure_cookie_fallback.open_session(app, request)
             
@@ -112,7 +106,8 @@ class FixedSessionInterface:
                     val = await self.original_interface.get(key=session_key, app=app)
                     
                     if val is None:
-                        # Session doesn't exist or has expired
+                        # Session doesn't exist or has expired, create a new one
+                        logger.debug(f"Session {sid[:10]}... not found or expired, creating new session")
                         from quart_session.sessions import ServerSideSession
                         session_class = getattr(self.original_interface, 'session_class', ServerSideSession)
                         return session_class(sid=self._generate_sid())
@@ -122,7 +117,7 @@ class FixedSessionInterface:
                         try:
                             data = self.original_interface.serializer.loads(val)
                         except (ValueError, TypeError) as e:
-                            app.logger.warning(f"Failed to deserialize session data for sid: {sid}: {e}")
+                            logger.warning(f"Failed to deserialize session data for sid: {sid[:10]}...: {e}")
                             from quart_session.sessions import ServerSideSession
                             session_class = getattr(self.original_interface, 'session_class', ServerSideSession)
                             return session_class(sid=self._generate_sid())
@@ -134,12 +129,12 @@ class FixedSessionInterface:
                     session_class = getattr(self.original_interface, 'session_class', ServerSideSession)
                     return session_class(data, sid)
             except Exception as e:
-                app.logger.error(f"Error retrieving session data: {e}")
+                logger.error(f"Error retrieving session data: {e}")
             
             # Fall back to the original interface if our custom implementation fails
             return await self.original_interface.open_session(app, request)
         except Exception as e:
-            app.logger.error(f"Error in open_session: {str(e)}")
+            logger.error(f"Error in open_session: {str(e)}")
             # Fall back to secure cookie session as a last resort
             return await self.secure_cookie_fallback.open_session(app, request)
     
@@ -317,28 +312,66 @@ def setup_session_handler(app, flask_session_dir):
     app.config['SESSION_PERMANENT'] = True
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)  # Adjust as needed
     
-    # Enhance cookie security
-    app.config['SESSION_COOKIE_SECURE'] = os.environ.get('PRODUCTION', 'false').lower() == 'true'
+    # IMPORTANT: Set a consistent secret key if one isn't already set
+    if not app.secret_key:
+        secret_key_file = os.path.join(os.path.dirname(flask_session_dir), 'secret_key')
+        if os.path.exists(secret_key_file):
+            with open(secret_key_file, 'rb') as f:
+                app.secret_key = f.read()
+        else:
+            # Generate a new secret key and save it
+            app.secret_key = os.urandom(32)
+            os.makedirs(os.path.dirname(secret_key_file), exist_ok=True)
+            with open(secret_key_file, 'wb') as f:
+                f.write(app.secret_key)
+            logger.info("Generated and stored new secret key")
+    
+    # Enhance cookie security but ensure proper local development settings
+    is_production = os.environ.get('PRODUCTION', 'false').lower() == 'true'
+    app.config['SESSION_COOKIE_SECURE'] = is_production
     app.config['SESSION_COOKIE_HTTPONLY'] = True
+    
+    # CRITICAL FIX: Set domain to None to allow browser to handle domain matching
+    # This prevents mismatch between 'localhost' and '127.0.0.1'
+    app.config['SESSION_COOKIE_DOMAIN'] = None
+    
+    # Ensure path covers all endpoints
+    app.config['SESSION_COOKIE_PATH'] = '/'
+    
+    # Fix SameSite setting to be more permissive for development
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
     app.config['SESSION_USE_SIGNER'] = True
     
-    # Try to connect to Redis
-    try:
-        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-        redis_client = redis.from_url(redis_url)
-        # Test the connection synchronously
-        redis_client.ping()
-        # Wrap the client to make it compatible with quart_session
-        wrapped_client = AsyncRedisWrapper(redis_client)
-        logger.info(f"Successfully connected to Redis at {redis_url}")
-        app.config['SESSION_REDIS'] = wrapped_client
-        
-        # Schedule periodic cleanup of expired sessions
-        _schedule_session_cleanup(app, redis_client)
-    except Exception as e:
-        logger.error(f"Failed to connect to Redis: {str(e)}. Using filesystem session fallback.")
-        # Fallback to filesystem session if Redis is unavailable
+    # Use environment variable to determine if Redis should be used
+    use_redis = os.environ.get('USE_REDIS_SESSIONS', 'false').lower() == 'true'
+    
+    if use_redis:
+        # Try to connect to Redis only if explicitly enabled
+        try:
+            redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+            redis_client = redis.from_url(redis_url)
+            # Test the connection synchronously
+            redis_client.ping()
+            # Wrap the client to make it compatible with quart_session
+            wrapped_client = AsyncRedisWrapper(redis_client)
+            logger.info(f"Successfully connected to Redis at {redis_url}")
+            app.config['SESSION_REDIS'] = wrapped_client
+            app.config['SESSION_TYPE'] = 'redis'
+            
+            # Schedule periodic cleanup of expired sessions
+            _schedule_session_cleanup(app, redis_client)
+        except Exception as e:
+            logger.error(f"Failed to connect to Redis: {str(e)}. Using filesystem session fallback.")
+            # Fallback to filesystem session if Redis is unavailable
+            app.config['SESSION_TYPE'] = 'filesystem'
+            app.config['SESSION_FILE_DIR'] = flask_session_dir
+            app.config['SESSION_FILE_THRESHOLD'] = 500  # Maximum number of sessions stored as files
+            
+            # Schedule filesystem session cleanup
+            _schedule_filesystem_cleanup(flask_session_dir)
+    else:
+        # Default to filesystem sessions
+        logger.info("Using filesystem sessions (Redis sessions disabled)")
         app.config['SESSION_TYPE'] = 'filesystem'
         app.config['SESSION_FILE_DIR'] = flask_session_dir
         app.config['SESSION_FILE_THRESHOLD'] = 500  # Maximum number of sessions stored as files
@@ -362,6 +395,7 @@ def setup_session_handler(app, flask_session_dir):
     os.makedirs(flask_session_dir, exist_ok=True)
     logger.info(f"Using session directory (fallback): {flask_session_dir}")
     logger.info(f"Session backend: {app.config.get('SESSION_TYPE', 'unknown')}")
+    logger.info(f"Session cookie settings: domain={app.config.get('SESSION_COOKIE_DOMAIN')}, path={app.config.get('SESSION_COOKIE_PATH')}, secure={app.config.get('SESSION_COOKIE_SECURE')}, samesite={app.config.get('SESSION_COOKIE_SAMESITE')}")
 
 def _schedule_session_cleanup(app, redis_client):
     """Schedule periodic cleanup of expired Redis sessions"""

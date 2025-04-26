@@ -565,6 +565,10 @@ class UserManager:
             True if successful, False otherwise
         """
         try:
+            # Log the operation (without exposing the full key)
+            key_preview = api_key[:5] + "..." if api_key and len(api_key) > 8 else "[invalid key]"
+            logger.info(f"Updating API key for user {user_id}: {key_preview}")
+            
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             

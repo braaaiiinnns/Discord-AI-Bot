@@ -34,6 +34,9 @@ logs/*.log
 *.db
 *.db*
 
+#data
+data/
+
 # JSON files (except specific ones)
 *.json
 !data/static/task_examples.json

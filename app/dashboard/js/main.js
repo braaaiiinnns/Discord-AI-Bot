@@ -435,35 +435,60 @@ function setupRefreshTimer() {
     }
     
     // Set up new timer
-    window.dashboardRefreshTimer = setInterval(() => {
+    window.dashboardRefreshTimer = setInterval(async () => {
         console.debug('Running scheduled dashboard refresh...');
         
-        // CRITICAL FIX: Explicitly ensure API key is available before periodic API calls
-        // This directly addresses the 30-second authentication loss issue
-        if (api && typeof api._ensureApiKey === 'function') {
-            const hasKey = api._ensureApiKey();
-            console.debug(`Periodic refresh: API key ${hasKey ? 'verified' : 'not available'}`);
-            
-            if (!hasKey) {
-                console.warn('No API key available for periodic refresh - requests will likely fail');
-                // Try to recover by fetching from auth if possible
-                if (auth && auth.isAuthenticated && typeof auth.fetchApiKey === 'function') {
-                    auth.fetchApiKey().then(keyData => {
-                        if (keyData && keyData.api_key) {
-                            api.setApiKey(keyData.api_key);
-                            console.debug('Successfully recovered API key during periodic refresh');
-                        }
-                    }).catch(err => {
-                        console.error('Failed to recover API key:', err);
-                    });
+        // CRITICAL FIX: Ensure API key is valid before making periodic requests
+        // First check if auth is available and user is authenticated
+        let apiKeyValid = false;
+        let apiKey = null;
+        
+        if (auth && auth.isAuthenticated) {
+            try {
+                // Always try to fetch a fresh API key before periodic requests
+                const keyData = await auth.fetchApiKey();
+                
+                if (keyData && keyData.api_key) {
+                    // We got a fresh key, update it in the API service
+                    apiKey = keyData.api_key;
+                    api.setApiKey(apiKey);
+                    // Save the API key to localStorage for persistence
+                    localStorage.setItem(DashboardConfig.storage.apiKey, apiKey);
+                    apiKeyValid = true;
+                    console.debug('Successfully refreshed API key for periodic dashboard update');
                 }
+            } catch (keyError) {
+                console.warn('Failed to refresh API key from auth service:', keyError);
+                
+                // Fall back to using the stored API key from localStorage
+                apiKey = localStorage.getItem(DashboardConfig.storage.apiKey);
+                if (apiKey && apiKey !== "undefined" && apiKey !== "null" && apiKey.trim() !== "") {
+                    api.setApiKey(apiKey);
+                    apiKeyValid = true;
+                    console.debug('Using stored API key from localStorage for refresh');
+                }
+            }
+        } else {
+            // Try to use API key from localStorage if auth is not available
+            apiKey = localStorage.getItem(DashboardConfig.storage.apiKey);
+            if (apiKey && apiKey !== "undefined" && apiKey !== "null" && apiKey.trim() !== "") {
+                api.setApiKey(apiKey);
+                apiKeyValid = true;
+                console.debug('User not authenticated, using stored API key from localStorage');
             }
         }
         
-        // Now make the API requests
-        const guildId = document.getElementById('guild-selector').value;
-        loadDashboardData(guildId);
-        loadBotStatus();
+        // Only proceed with API calls if we have a valid API key
+        if (apiKeyValid) {
+            // Now make the API requests
+            const guildId = document.getElementById('guild-selector').value;
+            loadDashboardData(guildId);
+            loadBotStatus();
+        } else {
+            console.error('Cannot perform periodic refresh: No valid API key available');
+            // Attempt dashboard re-initialization
+            retryConnection();
+        }
     }, interval);
 }
 
@@ -476,8 +501,17 @@ function loadSettings() {
     document.getElementById('api-key').value = apiKey;
     api.setApiKey(apiKey);
     
-    // Refresh interval
-    const refreshInterval = localStorage.getItem(DashboardConfig.storage.refreshInterval);
+    // Refresh interval - ensure it's not too aggressive
+    let refreshInterval = localStorage.getItem(DashboardConfig.storage.refreshInterval);
+    const minInterval = 5 * 60 * 1000; // Minimum 5 minutes
+    
+    // If refresh interval is stored but is too aggressive (less than 5 mins), reset it
+    if (refreshInterval && parseInt(refreshInterval) < minInterval) {
+        console.warn('Stored refresh interval is too aggressive, resetting to default 5 minutes');
+        refreshInterval = DashboardConfig.refreshInterval;
+        localStorage.setItem(DashboardConfig.storage.refreshInterval, refreshInterval);
+    }
+    
     if (refreshInterval) {
         document.getElementById('refresh-interval').value = parseInt(refreshInterval) / (60 * 1000);
     }

@@ -72,6 +72,9 @@ class Auth {
                 api.setAuthReady();
                 console.debug('API notified that authentication is ready');
             }
+
+            // Start API key validation timer
+            this.startApiKeyValidationTimer();
         } catch (error) {
             console.error('Failed to initialize authentication:', error);
             this.isAuthenticated = false;
@@ -795,6 +798,80 @@ class Auth {
                 </div>
             `;
         }
+    }
+
+    /**
+     * Monitor and manage API key refresh
+     * This functions as middleware to automatically refresh the key before expiration
+     * @returns {Promise<void>}
+     */
+    async validateApiKey() {
+        if (!this.isAuthenticated || !this.user) {
+            return;
+        }
+        
+        // Check if we have timing information for the API key
+        const keyTimestamp = parseInt(localStorage.getItem('api_key_timestamp') || '0');
+        const currentTime = Date.now();
+        const keyAge = currentTime - keyTimestamp;
+        
+        // If key is older than 25 seconds, consider refreshing it proactively
+        // This prevents the 30-35 second expiration issue
+        if (keyAge > 25000 || !this.user.api_key) {
+            console.debug(`API key age: ${keyAge/1000}s - refreshing proactively`);
+            
+            try {
+                // Get a fresh key
+                const keyData = await this.fetchApiKey();
+                
+                if (keyData && keyData.api_key) {
+                    // Update the stored user object
+                    this.user.api_key = keyData.api_key;
+                    
+                    // Update localStorage with new key and timestamp
+                    localStorage.setItem(DashboardConfig.storage.apiKey, keyData.api_key);
+                    localStorage.setItem('api_key_timestamp', currentTime.toString());
+                    
+                    console.debug('Successfully refreshed API key proactively');
+                    
+                    // Notify any listeners of the API key change
+                    this.notifyAuthStateChanged();
+                    
+                    // If API instance exists, update its key too
+                    if (typeof api !== 'undefined') {
+                        api.setApiKey(keyData.api_key);
+                    }
+                    
+                    return keyData.api_key;
+                }
+            } catch (error) {
+                console.warn('Failed to refresh API key proactively:', error);
+            }
+        }
+        
+        return this.user.api_key;
+    }
+
+    /**
+     * Start periodic API key validation to prevent expiration
+     * This ensures API keys are refreshed before they expire
+     */
+    startApiKeyValidationTimer() {
+        // Clear any existing timer
+        if (this.apiKeyValidationTimer) {
+            clearInterval(this.apiKeyValidationTimer);
+        }
+        
+        // Check and refresh key every 20 seconds
+        // This ensures we never hit the 30-35 second expiration
+        this.apiKeyValidationTimer = setInterval(async () => {
+            if (this.isAuthenticated && this.user) {
+                console.debug('Running scheduled API key validation');
+                await this.validateApiKey();
+            }
+        }, 20000);
+        
+        console.debug('API key validation timer started');
     }
 }
 

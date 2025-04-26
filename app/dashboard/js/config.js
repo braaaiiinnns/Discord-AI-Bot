@@ -10,7 +10,7 @@ const DashboardConfig = {
     defaultTimeRange: 30,
     
     // Default refresh interval in milliseconds
-    refreshInterval: 60 * 1000, // 60 seconds (changed from 5 minutes)
+    refreshInterval: 5 * 60 * 1000, // 5 minutes (restored to original value)
     
     // Chart colors
     chartColors: [

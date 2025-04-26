@@ -295,29 +295,78 @@ class Api {
      * Ensure the API key is set before making any request
      * This is called before any API request to guarantee authentication
      * @private
+     * @returns {boolean} Whether a valid API key is available
      */
     _ensureApiKey() {
-        // Always check localStorage first for the most recent API key
-        const savedApiKey = localStorage.getItem(DashboardConfig.storage.apiKey);
+        // Track whether the key was refreshed
+        let wasRefreshed = false;
         
-        // Only update if we have a saved key and our current one is missing or different
-        if (savedApiKey && (!this.apiKey || this.apiKey !== savedApiKey)) {
-            console.debug('API: Retrieving API key from localStorage before request');
-            this.apiKey = savedApiKey;
-            this.isAuthReady = true;
+        // Check for API key expiration based on timestamp in localStorage
+        const keyTimestamp = parseInt(localStorage.getItem('api_key_timestamp') || '0');
+        const currentTime = Date.now();
+        const keyAge = currentTime - keyTimestamp;
+        const KEY_MAX_AGE = 25 * 1000; // 25 seconds - refresh before the 30s server timeout
+        
+        // If key is older than 25 seconds, consider it potentially stale
+        const keyPotentiallyStale = keyAge > KEY_MAX_AGE;
+        
+        if (keyPotentiallyStale) {
+            console.debug(`API key is ${keyAge/1000} seconds old, may need refresh before request`);
         }
-        
-        // Check auth user as fallback
-        if ((!this.apiKey || this.apiKey === "undefined" || this.apiKey === "null") && 
-            auth && auth.isAuthenticated && auth.user && auth.user.api_key) {
-            console.debug('API: Using authenticated user API key');
+
+        // APPROACH 1: Check authenticated user for the most up-to-date key
+        if (auth && auth.isAuthenticated && auth.user && auth.user.api_key && 
+            (!this.apiKey || this.apiKey !== auth.user.api_key || keyPotentiallyStale)) {
+            
+            console.debug('API: Using fresh authenticated user API key');
             this.apiKey = auth.user.api_key;
-            // Save to localStorage for future use
+            
+            // Store the key and refresh timestamp
             localStorage.setItem(DashboardConfig.storage.apiKey, this.apiKey);
+            localStorage.setItem('api_key_timestamp', currentTime.toString());
+            
             this.isAuthReady = true;
+            wasRefreshed = true;
         }
         
-        return this.apiKey && this.apiKey !== "undefined" && this.apiKey !== "null";
+        // APPROACH 2: Check localStorage as fallback if we still don't have a key
+        if (!wasRefreshed) {
+            const savedApiKey = localStorage.getItem(DashboardConfig.storage.apiKey);
+            if (savedApiKey && (!this.apiKey || this.apiKey !== savedApiKey)) {
+                console.debug('API: Retrieving API key from localStorage before request');
+                this.apiKey = savedApiKey;
+                this.isAuthReady = true;
+                wasRefreshed = true;
+            }
+        }
+        
+        // If key is potentially stale and we didn't yet refresh it, try to fetch a fresh one from auth service
+        if (keyPotentiallyStale && !wasRefreshed && auth && typeof auth.fetchApiKey === 'function') {
+            console.debug('Key may be stale, requesting fresh API key from auth service');
+            
+            // Start async refresh but don't wait for it
+            // This will update the key for subsequent requests
+            auth.fetchApiKey().then(keyData => {
+                if (keyData && keyData.api_key) {
+                    console.debug('Successfully refreshed API key proactively');
+                    this.apiKey = keyData.api_key;
+                    localStorage.setItem(DashboardConfig.storage.apiKey, this.apiKey);
+                    localStorage.setItem('api_key_timestamp', Date.now().toString());
+                    this.isAuthReady = true;
+                }
+            }).catch(err => {
+                console.warn('Proactive API key refresh failed:', err);
+            });
+        }
+        
+        // Update timestamp if we're using a key without refreshing
+        if (!wasRefreshed && this.apiKey && currentTime - keyTimestamp > 60000) {
+            // If we haven't updated the timestamp in over a minute but are 
+            // still using the same key, update the timestamp
+            localStorage.setItem('api_key_timestamp', currentTime.toString());
+        }
+        
+        return Boolean(this.apiKey) && this.apiKey !== "undefined" && this.apiKey !== "null";
     }
 
     /**

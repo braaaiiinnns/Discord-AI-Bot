@@ -26,7 +26,6 @@ venv/
 ENV/
 .idea/
 .DS_Store
-data/flask_session/
 app/data/flask_session/
 logs/*.log
 .vscode/
@@ -36,6 +35,8 @@ logs/*.log
 
 #data
 data/
+data/files/
+data/flask_session/
 
 # JSON files (except specific ones)
 *.json

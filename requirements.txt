@@ -16,6 +16,7 @@ python-dateutil>=2.8.2
 asyncio>=3.4.3
 psutil>=5.9.5
 PyYAML>=6.0.1
+redis>=5.0.1
 # Dashboard requirements
 # flask[async]>=2.3.0 # Removed in favor of Quart
 # flask-cors>=4.0.0 # Replaced with quart-cors

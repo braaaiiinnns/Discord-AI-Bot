@@ -13,14 +13,30 @@ services:
       - API_SECRET_KEY=${API_SECRET_KEY}
       - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
       - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET}
+      - USE_REDIS_SESSIONS=true
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./data:/app/data
       - discord_bot_logs:/app/logs
     ports:
       - "${DASHBOARD_PORT:-8080}:8080"
       - "${API_PORT:-5000}:5000"
+    depends_on:
+      - redis
+    
+  redis:
+    image: redis:7-alpine
+    container_name: discord_ai_bot_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
 
 # Define named volumes for data persistence
 volumes:
   discord_bot_logs:
+    driver: local
+  redis_data:
     driver: local

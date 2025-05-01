@@ -117,13 +117,42 @@ class TaskManager:
     def register_role_color_manager(self, role_color_manager: RoleColorManager):
         """Register the role color manager with the task manager."""
         self.role_color_manager = role_color_manager
-        # Register the color change callback
+        
+        # Register the role color manager's tasks but don't start them yet
+        role_color_manager.start_hourly_changes()
+        
+        # Register the hourly color change callback (keeping the existing one for backward compatibility)
         self.register_callback("change_role_colors", role_color_manager.change_role_colors)
-        self.logger.info("Registered role color manager with task manager")
+        self.register_callback("change_role_colors_hourly", role_color_manager.change_role_colors_hourly)
+        
+        self.logger.info("Registered role color manager with task manager (hourly changes enabled)")
+        
+        # We'll start the task after the client is connected and the event loop is running
+        # Added to the start_tasks method
     
     def start_tasks(self):
         """Start all tasks defined in the JSON configuration."""
         self.logger.info("Starting all enabled tasks from JSON configuration...")
+        
+        # Start the hourly role color change task if it exists
+        if self.role_color_manager and self.role_color_manager.color_change_task_hourly_id:
+            try:
+                self.scheduler.start_task(self.role_color_manager.color_change_task_hourly_id)
+                self.logger.info(f"Started hourly role color change task: {self.role_color_manager.color_change_task_hourly_id}")
+                
+                # Schedule a one-time immediate color change after startup using schedule_wait
+                async def schedule_initial_color_change():
+                    await asyncio.sleep(5)  # Wait 5 seconds to ensure everything is initialized
+                    try:
+                        await self.role_color_manager.change_role_colors_hourly()
+                        self.logger.info("Executed initial hourly color change")
+                    except Exception as e:
+                        self.logger.error(f"Error during initial color change: {e}", exc_info=True)
+                
+                # Create and schedule the task
+                asyncio.create_task(schedule_initial_color_change())
+            except Exception as e:
+                self.logger.error(f"Error starting hourly role color change task: {e}", exc_info=True)
         
         for task_config in self.tasks_data.get("tasks", []):
             # Skip disabled tasks
@@ -522,8 +551,8 @@ class TaskManager:
                     )
                     return
                 
-                # Change the role color
-                success, message = await self.role_color_manager.change_specific_role_color(
+                # Change the role color using the new hourly algorithm
+                success, message = await self.role_color_manager.change_specific_role_color_hourly(
                     interaction.guild_id, 
                     role_name
                 )

@@ -23,7 +23,7 @@ from app.discord.cogs.gen_ai_cog import AICogCommands
 from app.discord.state import BotState
 from utils.ai_services import OpenAIStrategy, GoogleGenAIStrategy, ClaudeStrategy, GrokStrategy
 from utils.utilities import route_response
-from config.config import DEFAULT_SUMMARY_LIMIT
+from config.base import DEFAULT_SUMMARY_LIMIT
 
 # Configure logging for tests
 logging.basicConfig(level=logging.INFO)

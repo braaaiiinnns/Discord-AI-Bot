@@ -3,7 +3,8 @@ import logging
 import time
 from discord import app_commands
 from utils.ai_services import OpenAIStrategy, GoogleGenAIStrategy, ClaudeStrategy, GrokStrategy
-from config.config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, GROK_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT, ENCRYPTION_KEY
+from config.ai_config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, GROK_SYSTEM_PROMPT
+from config.base import DEFAULT_SUMMARY_LIMIT, ENCRYPTION_KEY
 from app.discord.state import BotState
 from utils.utilities import route_response
 from utils.ai_logger import AIInteractionLogger

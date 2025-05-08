@@ -21,7 +21,7 @@ from app.api.server import start_server as start_api_server
 from app.dashboard.server import start_dashboard_server
 
 # Import configuration
-from config.config import DASHBOARD_HOST, DASHBOARD_PORT
+from config.dashboard_config import DASHBOARD_HOST, DASHBOARD_PORT
 
 def parse_arguments():
     """Parse command line arguments for controlling which components to start"""

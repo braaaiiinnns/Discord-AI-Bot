@@ -4,7 +4,9 @@ from discord.ext import commands
 import os
 import json
 import random
-from config.config import PREMIUM_ROLE_NAMES, ENCRYPTION_KEY, PREMIUM_ROLES_FILE
+from config.bot_config import PREMIUM_ROLE_NAMES
+from config.base import ENCRYPTION_KEY
+from config.storage_config import PREMIUM_ROLES_FILE
 from utils.ncrypt import encrypt_data, decrypt_data
 
 # Confirmation view for admin actions

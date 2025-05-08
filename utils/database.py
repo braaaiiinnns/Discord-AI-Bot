@@ -15,7 +15,7 @@ from utils.ncrypt import encrypt_data, decrypt_data
 from typing import List, Dict, Any, Optional, Union, Callable
 from queue import Queue, Empty
 from threading import Thread, Lock
-from config.config import FILES_DIRECTORY # Import FILES_DIRECTORY
+from config.storage_config import FILES_DIRECTORY  # Import FILES_DIRECTORY from storage_config
 
 logger = logging.getLogger('discord_bot')
 

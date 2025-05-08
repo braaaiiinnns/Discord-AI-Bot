@@ -6,7 +6,8 @@ import logging
 import json
 import os
 from typing import List, Optional
-from config.config import COLOR_CHANGE_ROLE_NAMES, PREMIUM_ROLE_NAMES, ROLE_COLOR_CYCLES_FILE, PREMIUM_ROLES_FILE
+from config.bot_config import COLOR_CHANGE_ROLE_NAMES, PREMIUM_ROLE_NAMES
+from config.storage_config import ROLE_COLOR_CYCLES_FILE, PREMIUM_ROLES_FILE
 
 class RoleColorCog(commands.Cog):
     """Cog for managing role colors with a color picker"""

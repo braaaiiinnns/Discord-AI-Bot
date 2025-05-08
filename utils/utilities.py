@@ -13,7 +13,8 @@ try:
 except ImportError:
     def get_random_emoji():
         return "❓"  # Fallback emoji in case of import error
-from config.config import REQUEST_COUNT_FILE, RESET_HOURS
+from config.base import RESET_HOURS
+from config.storage_config import REQUEST_COUNT_FILE
 
 logger = logging.getLogger('discord_bot')
 

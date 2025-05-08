@@ -14,7 +14,8 @@ import hashlib
 import hmac
 
 # Import the API key and OAuth2 configuration from config
-from config.config import API_SECRET_KEY, DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_REDIRECT_URI
+from config.base import API_SECRET_KEY
+from config.bot_config import DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_REDIRECT_URI
 from .user_model import user_manager
 
 # Set up logger

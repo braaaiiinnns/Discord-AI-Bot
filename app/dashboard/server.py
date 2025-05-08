@@ -21,7 +21,8 @@ logger = logging.getLogger('discord_bot.dashboard')
 
 # Get config values
 try:
-    from config.config import DASHBOARD_HOST, DASHBOARD_PORT, FLASK_SESSION_DIR
+    from config.dashboard_config import DASHBOARD_HOST, DASHBOARD_PORT
+    from config.storage_config import FLASK_SESSION_DIR
 except ImportError:
     logger.warning("Could not import config. Using default values.")
     DASHBOARD_HOST = '127.0.0.1'

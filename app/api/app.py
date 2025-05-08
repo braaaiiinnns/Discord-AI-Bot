@@ -4,7 +4,7 @@ from quart import Quart, redirect, send_from_directory, request, url_for, abort,
 from quart_cors import cors
 import logging
 from datetime import datetime, timedelta
-from config.config import FLASK_SESSION_DIR
+from config.storage_config import FLASK_SESSION_DIR
 from typing import Callable, Dict, List, Optional
 from .session_handler import setup_session_handler
 

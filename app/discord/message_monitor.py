@@ -12,9 +12,10 @@ import re
 import traceback
 import time
 from collections import OrderedDict
+import sqlite3
 
 from utils.database import UnifiedDatabase
-from config.config import FILES_DIRECTORY
+from config.storage_config import FILES_DIRECTORY
 
 logger = logging.getLogger('discord_bot')
 

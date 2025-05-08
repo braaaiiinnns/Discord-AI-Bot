@@ -5,8 +5,15 @@ import time
 # Add imports for Optional and Dict
 from typing import Optional, Dict 
 import logging # Import logging
-from utils.ai_services import OpenAIStrategy, GoogleGenAIStrategy, ClaudeStrategy, GrokStrategy
-from config.config import GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, GROK_SYSTEM_PROMPT, DEFAULT_SUMMARY_LIMIT
+from utils.ai_services import (
+    OpenAIStrategy, GoogleGenAIStrategy, ClaudeStrategy, 
+    GrokStrategy, SummarizationStrategy
+)
+from config.ai_config import (
+    GPT_SYSTEM_PROMPT, GOOGLE_SYSTEM_PROMPT, CLAUDE_SYSTEM_PROMPT, GROK_SYSTEM_PROMPT,
+    SUMMARIZATION_PROVIDER
+)
+from config.base import DEFAULT_SUMMARY_LIMIT
 from utils.utilities import route_response
 from app.discord.state import BotState # Import BotState
 from app.discord.message_monitor import MessageMonitor # Import MessageMonitor
@@ -27,6 +34,10 @@ class AICogCommands(commands.Cog):
         self.claude_client = None
         self.grok_client = None
         
+        # Summarization client - defaults to Google for backward compatibility
+        self.summarization_client = None
+        self.summarization_provider = SUMMARIZATION_PROVIDER
+        
         # Response cache to avoid regenerating identical responses
         self.response_cache = {}
         self.cache_max_size = 50
@@ -40,6 +51,21 @@ class AICogCommands(commands.Cog):
         self.google_client = google_client
         self.claude_client = claude_client
         self.grok_client = grok_client
+        
+        # Determine which client to use for summarization based on the provider
+        if self.summarization_provider == 'google':
+            self.summarization_client = google_client
+        elif self.summarization_provider == 'openai':
+            self.summarization_client = openai_client
+        elif self.summarization_provider == 'claude':
+            self.summarization_client = claude_client
+        elif self.summarization_provider == 'grok':
+            self.summarization_client = grok_client
+        else:
+            # Default to Google if the provider is not recognized
+            self.logger.warning(f"Unrecognized summarization provider '{self.summarization_provider}'. Using Google as default.")
+            self.summarization_client = google_client
+            self.summarization_provider = 'google'
         
         # Register the commands in the group
         self._register_ask_commands()
@@ -256,16 +282,26 @@ class AICogCommands(commands.Cog):
             self.logger.warning("Message monitor not available, skipping AI interaction logging.")
     
     async def _summarize_response(self, response: str) -> str:
-        """Summarize a response using Google GenAI"""
+        """Summarize a response using the configured summarization service"""
+        self.logger.debug(f"Summarizing response using {self.summarization_provider} provider")
         summary_prompt = f"Summarize the following text to less than {DEFAULT_SUMMARY_LIMIT} characters:\n\n{response}"
         
         try:
-            google_strategy = GoogleGenAIStrategy(self.google_client, self.logger)
-            return await google_strategy.generate_response(
+            # Use the generic SummarizationStrategy with the configured provider
+            summarization_strategy = SummarizationStrategy(
+                self.summarization_client, 
+                self.logger,
+                provider=self.summarization_provider
+            )
+            
+            # Select an appropriate system prompt based on the summarization task
+            summarization_system_prompt = "You are a text summarization assistant. Your task is to create concise, accurate summaries of longer content."
+            
+            return await summarization_strategy.generate_response(
                 [{"role": "user", "content": summary_prompt}], 
-                GOOGLE_SYSTEM_PROMPT
+                summarization_system_prompt
             )
         except Exception as e:
-            self.logger.error(f"Error during summarization: {e}", exc_info=True)
+            self.logger.error(f"Error during summarization with {self.summarization_provider}: {e}", exc_info=True)
             # Return a basic summary if the smart summarization fails
             return response[:DEFAULT_SUMMARY_LIMIT] + "... (truncated)"

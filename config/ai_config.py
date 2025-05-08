@@ -9,13 +9,13 @@ GROK_API_KEY = os.getenv('GROK_API_KEY')
 
 # AI Model Configuration
 OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
-GOOGLE_GENAI_MODEL = os.getenv('GOOGLE_GENAI_MODEL', 'gemini-1.5-pro')
+GOOGLE_GENAI_MODEL = os.getenv('GOOGLE_GENAI_MODEL', 'gemini-2.0-flash')
 CLAUDE_MODEL = os.getenv('CLAUDE_MODEL', 'claude-3-5-haiku-20241022')
 GROK_MODEL = os.getenv('GROK_MODEL', 'grok-3-beta')
 
 # Summarization model configuration
 # Default to Google's model for backward compatibility
-SUMMARIZATION_MODEL = os.getenv('SUMMARIZATION_MODEL', GOOGLE_GENAI_MODEL)
+SUMMARIZATION_MODEL = os.getenv('SUMMARIZATION_MODEL', 'gemini-2.0-flash-lite')
 SUMMARIZATION_PROVIDER = os.getenv('SUMMARIZATION_PROVIDER', 'google')  # Options: google, openai, claude, grok
 
 # System prompts

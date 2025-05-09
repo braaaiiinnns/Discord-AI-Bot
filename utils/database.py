@@ -48,13 +48,17 @@ def validate_timestamp(timestamp):
         return None
     if not isinstance(timestamp, str):
         timestamp = str(timestamp)
-    # Check for ISO format: YYYY-MM-DDThh:mm:ss.sssZ
-    if not re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$', timestamp):
-        # Try secondary format YYYY-MM-DD hh:mm:ss
-        if not re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$', timestamp):
-            logger.warning(f"Invalid timestamp format: {timestamp}")
-            raise ValueError(f"Invalid timestamp format")
-    return timestamp
+    
+    # Check for ISO format with optional timezone: YYYY-MM-DDThh:mm:ss.sssZ or YYYY-MM-DDThh:mm:ss.sss+00:00
+    if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$', timestamp):
+        return timestamp
+    
+    # Try secondary format YYYY-MM-DD hh:mm:ss
+    if re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$', timestamp):
+        return timestamp
+        
+    logger.warning(f"Invalid timestamp format: {timestamp}")
+    raise ValueError(f"Invalid timestamp format")
 
 # Add the missing get_db_path function
 def get_db_path(db_name: str) -> str:
@@ -755,12 +759,42 @@ class UnifiedDatabase:
             bool: Success status
         """
         try:
-            logger.debug(f"Storing message edit for message {edit_data['message_id']}.")
+            message_id = edit_data['message_id']
+            logger.debug(f"Storing message edit for message {message_id}.")
+            
+            # First check if the message exists in the messages table
+            conn = await self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM messages WHERE message_id = ?", (message_id,))
+            message_exists = cursor.fetchone() is not None
+            
+            if not message_exists:
+                logger.warning(f"Cannot store edit for message {message_id}: Message does not exist in database")
+                # Store the original message first
+                if all(key in edit_data for key in ['channel_id', 'guild_id', 'author_id']):
+                    # Create a simplified message record to satisfy the foreign key constraint
+                    message_data = {
+                        'message_id': message_id,
+                        'channel_id': edit_data['channel_id'],
+                        'guild_id': edit_data['guild_id'],
+                        'author_id': edit_data['author_id'],
+                        'author_name': 'Unknown (Added during edit)',
+                        'content': edit_data.get('original_content', ''),
+                        'timestamp': edit_data.get('edit_timestamp', datetime.utcnow().isoformat()),
+                        'message_type': 'text',
+                        'is_bot': False
+                    }
+                    await self.store_message(message_data)
+                    logger.debug(f"Created message record for {message_id} to satisfy foreign key constraint")
+                else:
+                    logger.error(f"Cannot create message record for {message_id}: Missing required fields")
+                    await self._release_connection(conn)
+                    return False
+            
+            # Now store the edit
             original_content_encrypted = encrypt_data(self.encryption_key, edit_data['original_content'])
             new_content_encrypted = encrypt_data(self.encryption_key, edit_data['new_content'])
             
-            conn = await self._get_connection()
-            cursor = conn.cursor()
             cursor.execute('''
             INSERT INTO message_edits (
                 message_id, channel_id, guild_id, author_id,
